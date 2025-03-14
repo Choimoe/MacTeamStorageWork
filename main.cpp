@@ -1,6 +1,9 @@
 #include <cstdio>
 #include <cassert>
 #include <cstdlib>
+#include <algorithm>
+#include <cstring>
+#include <iostream>
 
 #define MAX_DISK_NUM (10 + 1)
 #define MAX_DISK_SIZE (16384 + 1)
@@ -14,6 +17,9 @@ typedef struct Request_ {
     int object_id;
     int prev_id;
     bool is_done;
+
+    // 选择的最佳副本
+    int best_rep;
 } Request;
 
 typedef struct Object_ {
@@ -24,12 +30,21 @@ typedef struct Object_ {
     bool is_delete;
 } Object;
 
+// 新增磁头状态结构
+typedef struct DiskHead_ {
+    int pos;            // 当前磁头位置（存储单元编号）
+    int last_action;    // 上一次动作类型：0-Jump,1-Pass,2-Read
+    int last_token;     // 上一次消耗的令牌数
+} DiskHead;
+
 Request request[MAX_REQUEST_NUM];
 Object object[MAX_OBJECT_NUM];
 
 int T, M, N, V, G;
 int disk[MAX_DISK_NUM][MAX_DISK_SIZE];
 int disk_point[MAX_DISK_NUM];
+
+DiskHead disk_head[MAX_DISK_NUM];
 
 void timestamp_action()
 {
@@ -133,6 +148,64 @@ void write_action()
     fflush(stdout);
 }
 
+// 紧凑性计算函数（最大间隙越小越好）
+int calculate_compactness(const int* blocks, int size) {
+    if(size <= 1) return 0;
+    
+    int sorted[MAX_DISK_SIZE];
+    memcpy(sorted, blocks+1, sizeof(int)*size);
+    std::sort(sorted, sorted+size);
+    
+    int max_gap = 0;
+    for(int i=1; i<size; i++){
+        max_gap = std::max(max_gap, sorted[i]-sorted[i-1]);
+    }
+    // 处理环形间隙
+    max_gap = std::max(max_gap, (V - sorted[size-1]) + sorted[0]);
+    return max_gap;
+}
+
+// 计算移动到第一个块的最短距离（环形）
+int calculate_move_cost(int current_pos, int first_block) {
+    int clockwise = (first_block - current_pos + V) % V;
+    return std::min(clockwise, V - clockwise);
+}
+
+// 副本评分函数
+int evaluate_replica(int rep_id, const Object* obj, int current_time) {
+    const int disk_id = obj->replica[rep_id];
+    const int head_pos = disk_head[disk_id].pos;
+    const int* blocks = obj->unit[rep_id];
+    
+    // 紧凑性评分（权重40%）
+    int compactness = V - calculate_compactness(blocks, obj->size);
+    
+    // 移动成本评分（权重50%）
+    int move_cost = V - calculate_move_cost(head_pos, blocks[1]);
+    
+    // 时间局部性评分（权重10%，需预存标签访问模式）
+    // 此处需要接入预处理数据，暂用固定值
+    int time_score = 0;
+    
+    return compactness*4 + move_cost*5 + time_score*1;
+}
+
+// 选择最佳副本
+int select_best_replica(int object_id) {
+    const Object* obj = &object[object_id];
+    int best_rep = 1;
+    int max_score = -1;
+    
+    for(int rep=1; rep<=REP_NUM; rep++){
+        int score = evaluate_replica(rep, obj, 0);
+        if(score > max_score){
+            max_score = score;
+            best_rep = rep;
+        }
+    }
+    return best_rep;
+}
+
 void read_action()
 {
     int n_read;
@@ -144,6 +217,7 @@ void read_action()
         request[request_id].prev_id = object[object_id].last_request_point;
         object[object_id].last_request_point = request_id;
         request[request_id].is_done = false;
+        request[request_id].best_rep = select_best_replica(object_id);
     }
 
     static int current_request = 0;
@@ -159,10 +233,18 @@ void read_action()
     } else {
         current_phase++;
         object_id = request[current_request].object_id;
+        int best_rep = request[current_request].best_rep;
+        int target_disk = object[object_id].replica[best_rep];
         for (int i = 1; i <= N; i++) {
-            if (i == object[object_id].replica[1]) {
-                if (current_phase % 2 == 1) {
-                    printf("j %d\n", object[object_id].unit[1][current_phase / 2 + 1]);
+            if (i == target_disk) {
+                int target_pos = object[object_id].unit[best_rep][current_phase / 2 + 1];
+                if (current_phase != 1 && current_phase % 2 == 1 && target_pos == disk_head[target_disk].pos + 1) {
+                    printf("r#\n");
+                    current_phase++;
+                } else if (current_phase % 2 == 1) {
+                    std::cerr << "[DEBUG] " << " current_phase: " << current_phase << " object_id: " << object_id << " target_pos: " << target_pos << std::endl;
+                    printf("j %d\n", target_pos);
+                    disk_head[target_disk].pos = target_pos;
                 } else {
                     printf("r#\n");
                 }
@@ -202,7 +284,11 @@ void clean()
 
 int main()
 {
+    freopen("log.txt", "w", stderr);
+
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
+
+    for(int i=1; i<=N; i++) disk_head[i].pos = 1;
 
     for (int i = 1; i <= M; i++) {
         for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
