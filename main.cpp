@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
+#include <cmath>
 
 #define MAX_DISK_NUM (10 + 1)
 #define MAX_DISK_SIZE (16384 + 1)
@@ -168,7 +169,7 @@ int calculate_compactness(const int* blocks, int size) {
 // 计算移动到第一个块的最短距离（环形）
 int calculate_move_cost(int current_pos, int first_block) {
     int clockwise = (first_block - current_pos + V) % V;
-    return std::min(clockwise, V - clockwise);
+    return clockwise;
 }
 
 // 副本评分函数
@@ -187,7 +188,7 @@ int evaluate_replica(int rep_id, const Object* obj, int current_time) {
     // 此处需要接入预处理数据，暂用固定值
     int time_score = 0;
     
-    return compactness*4 + move_cost*5 + time_score*1;
+    return compactness*2 + move_cost*7 + time_score*1;
 }
 
 // 选择最佳副本
@@ -237,35 +238,48 @@ void read_action()
         for (int i = 1; i <= N; i++) {
             if (i == target_disk) {
                 int target_pos = object[object_id].unit[best_rep][current_phase + 1];
+                int remain_token = G;
                 std::cerr << "[DEBUG] " << " current_phase: " << current_phase << " object_id: " << object_id << " target_pos: " << target_pos << " disk_head[target_disk].pos: " << disk_head[target_disk].pos << std::endl;
-                if (target_pos == disk_head[target_disk].pos) {
-                    int remain_token = G;
-                    while(true) {
-                        int move_cost = (disk_head[target_disk].last_action != 2) ? 64 : 
-                            std::max(16, (int)ceil(disk_head[target_disk].last_token * 0.8));
-                        target_pos = object[object_id].unit[best_rep][current_phase + 1];
-                        if(move_cost > remain_token || current_phase == object[object_id].size || target_pos != disk_head[target_disk].pos) {
-                            if(target_pos != disk_head[target_disk].pos) {
-                                std::cerr << "[DEBUG] " << " move_cost: " << move_cost << " remain_token: " << remain_token << " target_disk: " << target_disk << std::endl;
-                            }
-                            printf("#\n");
-                            std::cerr << "[OUTPUT] " << " end" << std::endl;
-                            break;
+                if (target_pos != disk_head[target_disk].pos) {
+                    int pass_cost = calculate_move_cost(disk_head[target_disk].pos, target_pos);
+                    if (pass_cost > G) {
+                        std::cerr << "[OUTPUT] " << " jump" << std::endl;
+                        remain_token -= G;
+                        disk_head[target_disk].pos = target_pos;
+                        disk_head[target_disk].last_action = 0;
+                        disk_head[target_disk].last_token = G;
+                        printf("j %d\n", target_pos);
+                        continue;
+                    } else {
+                        remain_token -= pass_cost;
+                        for (int i = 1; i <= pass_cost; i++) {
+                            printf("p");
+                            std::cerr << "[OUTPUT] " << " pass" << std::endl;
                         }
-                        current_phase++;
-                        printf("r");
-                        std::cerr << "[OUTPUT] " << " read" << std::endl;
-                        disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1;
-                        disk_head[target_disk].last_action = 2;
-                        disk_head[target_disk].last_token = move_cost;
-                        remain_token -= move_cost;
+                        disk_head[target_disk].pos = target_pos;
+                        disk_head[target_disk].last_action = 1;
+                        disk_head[target_disk].last_token = 1;
                     }
-                } else {
-                    printf("j %d\n", target_pos);
-                    std::cerr << "[OUTPUT] " << " jump" << std::endl;
-                    disk_head[target_disk].pos = target_pos;
-                    disk_head[target_disk].last_action = 0;
-                    disk_head[target_disk].last_token = G;
+                }
+                while(true) {
+                    int move_cost = (disk_head[target_disk].last_action != 2) ? 64 : 
+                        std::max(16, (int)ceil(disk_head[target_disk].last_token * 0.8));
+                    target_pos = object[object_id].unit[best_rep][current_phase + 1];
+                    if(move_cost > remain_token || current_phase == object[object_id].size || target_pos != disk_head[target_disk].pos) {
+                        if(target_pos != disk_head[target_disk].pos) {
+                            std::cerr << "[DEBUG] " << " move_cost: " << move_cost << " remain_token: " << remain_token << " target_disk: " << target_disk << std::endl;
+                        }
+                        printf("#\n");
+                        std::cerr << "[OUTPUT] " << " end" << std::endl;
+                        break;
+                    }
+                    current_phase++;
+                    printf("r");
+                    std::cerr << "[OUTPUT] " << " read" << std::endl;
+                    disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1;
+                    disk_head[target_disk].last_action = 2;
+                    disk_head[target_disk].last_token = move_cost;
+                    remain_token -= move_cost;
                 }
             } else {
                 printf("#\n");
