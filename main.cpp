@@ -238,15 +238,19 @@ void read_action()
         for (int i = 1; i <= N; i++) {
             if (i == target_disk) {
                 int target_pos = object[object_id].unit[best_rep][current_phase / 2 + 1];
-                if (current_phase != 1 && current_phase % 2 == 1 && target_pos == disk_head[target_disk].pos + 1) {
+                if (current_phase != 1 && current_phase % 2 == 1 && target_pos == disk_head[target_disk].pos) {
                     printf("r#\n");
                     current_phase++;
+                    disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1;
                 } else if (current_phase % 2 == 1) {
-                    std::cerr << "[DEBUG] " << " current_phase: " << current_phase << " object_id: " << object_id << " target_pos: " << target_pos << std::endl;
+                    if (current_phase != 1 && target_pos != disk_head[target_disk].pos) {
+                        std::cerr << "[DEBUG] " << " current_phase: " << current_phase << " object_id: " << object_id << " target_pos: " << target_pos << " disk_head[target_disk].pos: " << disk_head[target_disk].pos << std::endl;
+                    }
                     printf("j %d\n", target_pos);
                     disk_head[target_disk].pos = target_pos;
                 } else {
                     printf("r#\n");
+                    disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1;
                 }
             } else {
                 printf("#\n");
