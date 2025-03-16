@@ -5,6 +5,11 @@
 #include <cstring>
 #include <iostream>
 #include <cmath>
+#include <vector>
+#include <unordered_map>
+#include <string>
+#include <queue>
+#include <stack>
 
 #define MAX_DISK_NUM (10 + 1)
 #define MAX_DISK_SIZE (16384 + 1)
@@ -18,6 +23,9 @@ typedef struct Request_ {
     int object_id;
     int prev_id;
     bool is_done;
+    int time;
+
+    std::string head_movement; 
 } Request;
 
 typedef struct Object_ {
@@ -26,6 +34,8 @@ typedef struct Object_ {
     int size;
     int last_request_point;
     bool is_delete;
+
+    std::queue<int> active_phases;
 } Object;
 
 // 新增磁头状态结构
@@ -41,14 +51,16 @@ Object object[MAX_OBJECT_NUM];
 int T, M, N, V, G;
 int disk[MAX_DISK_NUM][MAX_DISK_SIZE];
 int disk_point[MAX_DISK_NUM];
+int timestamp;
 
 DiskHead disk_head[MAX_DISK_NUM];
 
 void timestamp_action()
 {
-    int timestamp;
-    scanf("%*s%d", &timestamp);
-    printf("TIMESTAMP %d\n", timestamp);
+    int cur_time;
+    scanf("%*s%d", &cur_time);
+    printf("TIMESTAMP %d\n", cur_time);
+    timestamp = cur_time;
 
     fflush(stdout);
 }
@@ -176,17 +188,17 @@ int evaluate_replica(int rep_id, const Object* obj, int current_time) {
     const int head_pos = disk_head[disk_id].pos;
     const int* blocks = obj->unit[rep_id];
     
-    // 紧凑性评分（权重40%）
+    // 紧凑性评分
     int compactness = G - std::min(G, calculate_compactness(blocks, obj->size));
     
-    // 移动成本评分（权重50%）
+    // 移动成本评分
     int move_cost = G - std::min(G, calculate_move_cost(head_pos, blocks[1]));
     
-    // 时间局部性评分（权重10%，需预存标签访问模式）
+    // 时间局部性评分（需预存标签访问模式）
     // 此处需要接入预处理数据，暂用固定值
     int time_score = 0;
     
-    return compactness*5 + move_cost*5 + time_score*1;
+    return compactness*1 + move_cost*1 + time_score*1;
 }
 
 // 选择最佳副本
@@ -207,99 +219,129 @@ int select_best_replica(int object_id) {
     return best_rep;
 }
 
+void do_object_read(int object_id, int &current_phase){
+    int best_rep = select_best_replica(object_id);
+    int target_disk = object[object_id].replica[best_rep];
+    int is_read = 0;
+    for (int i = 1; i <= N; i++) {
+        if (i == target_disk) {
+            int target_pos = object[object_id].unit[best_rep][current_phase + 1];
+            int remain_token = G;
+            std::cerr << "[DEBUG] " << " current_phase: " << current_phase << " object_id: " << object_id << " target_pos: " << target_pos << " disk_head[target_disk].pos: " << disk_head[target_disk].pos << std::endl;
+            if (target_pos != disk_head[target_disk].pos) {
+                int pass_cost = calculate_move_cost(disk_head[target_disk].pos, target_pos);
+                if (pass_cost > G) {
+                    std::cerr << "[OUTPUT] " << " jump" << std::endl;
+                    remain_token -= G;
+                    disk_head[target_disk].pos = target_pos;
+                    disk_head[target_disk].last_action = 0;
+                    disk_head[target_disk].last_token = G;
+                    printf("j %d\n", target_pos);
+                    continue;
+                } else {
+                    remain_token -= pass_cost;
+                    for (int i = 1; i <= pass_cost; i++) {
+                        printf("p");
+                        std::cerr << "[OUTPUT] " << " pass" << std::endl;
+                    }
+                    disk_head[target_disk].pos = target_pos;
+                    disk_head[target_disk].last_action = 1;
+                    disk_head[target_disk].last_token = 1;
+                }
+            }
+            while(true) {
+                int move_cost = (disk_head[target_disk].last_action != 2) ? 64 : 
+                    std::max(16, (int)ceil(disk_head[target_disk].last_token * 0.8));
+                target_pos = object[object_id].unit[best_rep][current_phase + 1];
+                if(move_cost > remain_token || current_phase == object[object_id].size || target_pos != disk_head[target_disk].pos) {
+                    if(target_pos != disk_head[target_disk].pos) {
+                        std::cerr << "[DEBUG] " << " move_cost: " << move_cost << " remain_token: " << remain_token << " target_disk: " << target_disk << std::endl;
+                    }
+                    printf("#\n");
+                    std::cerr << "[OUTPUT] " << " end" << std::endl;
+                    break;
+                }
+                current_phase++;
+                printf("r");
+                std::cerr << "[OUTPUT] " << " read" << std::endl;
+                disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1;
+                disk_head[target_disk].last_action = 2;
+                disk_head[target_disk].last_token = move_cost;
+                remain_token -= move_cost;
+            }
+        } else {
+            printf("#\n");
+        }
+    }
+}
+
 void read_action()
 {
     int n_read;
-    int request_id, object_id;
+    int request_id = -1, object_id;
     scanf("%d", &n_read);
+    static std::stack<int> new_requests;
     for (int i = 1; i <= n_read; i++) {
         scanf("%d%d", &request_id, &object_id);
         request[request_id].object_id = object_id;
         request[request_id].prev_id = object[object_id].last_request_point;
         object[object_id].last_request_point = request_id;
+        object[object_id].active_phases.push(request_id);
         request[request_id].is_done = false;
+        request[request_id].time = timestamp;
+        new_requests.push(request_id);
     }
 
     static int current_request = 0;
     static int current_phase = 0;
     if (!current_request && n_read > 0) {
-        current_request = request_id;
+        current_request = new_requests.top();
+        new_requests.pop();
     }
     if (!current_request) {
+        std::cerr << "[DEBUG] skip read" << " current_request: " << current_request << " request_id: " << request_id << std::endl;
         for (int i = 1; i <= N; i++) {
             printf("#\n");
         }
         printf("0\n");
-    } else {
-        object_id = request[current_request].object_id;
-        int best_rep = select_best_replica(object_id);
-        int target_disk = object[object_id].replica[best_rep];
-        int is_read = 0;
-        for (int i = 1; i <= N; i++) {
-            if (i == target_disk) {
-                int target_pos = object[object_id].unit[best_rep][current_phase + 1];
-                int remain_token = G;
-                std::cerr << "[DEBUG] " << " current_phase: " << current_phase << " object_id: " << object_id << " target_pos: " << target_pos << " disk_head[target_disk].pos: " << disk_head[target_disk].pos << std::endl;
-                if (target_pos != disk_head[target_disk].pos) {
-                    int pass_cost = calculate_move_cost(disk_head[target_disk].pos, target_pos);
-                    if (pass_cost > G) {
-                        std::cerr << "[OUTPUT] " << " jump" << std::endl;
-                        remain_token -= G;
-                        disk_head[target_disk].pos = target_pos;
-                        disk_head[target_disk].last_action = 0;
-                        disk_head[target_disk].last_token = G;
-                        printf("j %d\n", target_pos);
-                        continue;
-                    } else {
-                        remain_token -= pass_cost;
-                        for (int i = 1; i <= pass_cost; i++) {
-                            printf("p");
-                            std::cerr << "[OUTPUT] " << " pass" << std::endl;
-                        }
-                        disk_head[target_disk].pos = target_pos;
-                        disk_head[target_disk].last_action = 1;
-                        disk_head[target_disk].last_token = 1;
-                    }
-                }
-                while(true) {
-                    int move_cost = (disk_head[target_disk].last_action != 2) ? 64 : 
-                        std::max(16, (int)ceil(disk_head[target_disk].last_token * 0.8));
-                    target_pos = object[object_id].unit[best_rep][current_phase + 1];
-                    if(move_cost > remain_token || current_phase == object[object_id].size || target_pos != disk_head[target_disk].pos) {
-                        if(target_pos != disk_head[target_disk].pos) {
-                            std::cerr << "[DEBUG] " << " move_cost: " << move_cost << " remain_token: " << remain_token << " target_disk: " << target_disk << std::endl;
-                        }
-                        printf("#\n");
-                        std::cerr << "[OUTPUT] " << " end" << std::endl;
-                        break;
-                    }
-                    current_phase++;
-                    printf("r");
-                    std::cerr << "[OUTPUT] " << " read" << std::endl;
-                    disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1;
-                    disk_head[target_disk].last_action = 2;
-                    disk_head[target_disk].last_token = move_cost;
-                    remain_token -= move_cost;
-                }
-            } else {
-                printf("#\n");
-            }
-        }
-
-        if (current_phase == object[object_id].size) {
-            if (object[object_id].is_delete) {
-                printf("0\n");
-            } else {
-                printf("1\n%d\n", current_request);
-                request[current_request].is_done = true;
-            }
-            current_request = 0;
-            current_phase = 0;
-        } else {
-            printf("0\n");
-        }
+        fflush(stdout);
+        return;
     }
 
+    object_id = request[current_request].object_id;
+
+    do_object_read(object_id, current_phase);
+
+    std::vector<int> finished_phases;
+
+    if (current_phase == object[object_id].size) {
+        if (object[object_id].is_delete) {
+            printf("0\n");
+        } else {
+            auto *active_phases = &object[object_id].active_phases;
+            while (!active_phases->empty() && active_phases->front() <= current_request) {
+                finished_phases.push_back(active_phases->front());
+                request[active_phases->front()].is_done = true;
+                active_phases->pop();
+            }
+            int fsize = finished_phases.size();
+            // printf("1\n%d\n", current_request);
+            // std::cerr << "[DEBUG] " << " finished_phases: " << fsize << " current_request: " << current_request << std::endl;
+            printf("%d\n", fsize);
+            // std::cerr << "[OUTPUT] " << " finished_phases: " << fsize << std::endl;
+            for (int i = 0; i < fsize; i++) {
+                printf("%d\n", finished_phases[i]);
+                // std::cerr << finished_phases[i];
+            }
+            // std::cerr << "\n";
+            
+            request[current_request].is_done = true;
+        }
+        current_request = 0;
+        current_phase = 0;
+    } else {
+        printf("0\n");
+    }
     fflush(stdout);
 }
 
