@@ -18,9 +18,6 @@ typedef struct Request_ {
     int object_id;
     int prev_id;
     bool is_done;
-
-    // 选择的最佳副本
-    int best_rep;
 } Request;
 
 typedef struct Object_ {
@@ -157,13 +154,14 @@ int calculate_compactness(const int* blocks, int size) {
     memcpy(sorted, blocks+1, sizeof(int)*size);
     std::sort(sorted, sorted+size);
     
-    int max_gap = 0;
+    int score = 0, lst = 64, pass = 0;
     for(int i=1; i<size; i++){
-        max_gap = std::max(max_gap, sorted[i]-sorted[i-1]);
+        lst = (pass ? 64 : std::max(16, (int)ceil(lst * 0.8)));
+        pass = sorted[i] - sorted[i-1] - 1;
+        score += pass + lst;
     }
-    // 处理环形间隙
-    max_gap = std::max(max_gap, (V - sorted[size-1]) + sorted[0]);
-    return max_gap;
+    
+    return score;
 }
 
 // 计算移动到第一个块的最短距离（环形）
@@ -179,22 +177,22 @@ int evaluate_replica(int rep_id, const Object* obj, int current_time) {
     const int* blocks = obj->unit[rep_id];
     
     // 紧凑性评分（权重40%）
-    int compactness = V - calculate_compactness(blocks, obj->size);
+    int compactness = G - std::min(G, calculate_compactness(blocks, obj->size));
     
     // 移动成本评分（权重50%）
-    int move_cost = V - calculate_move_cost(head_pos, blocks[1]);
+    int move_cost = G - std::min(G, calculate_move_cost(head_pos, blocks[1]));
     
     // 时间局部性评分（权重10%，需预存标签访问模式）
     // 此处需要接入预处理数据，暂用固定值
     int time_score = 0;
     
-    return compactness*2 + move_cost*7 + time_score*1;
+    return compactness*5 + move_cost*5 + time_score*1;
 }
 
 // 选择最佳副本
 int select_best_replica(int object_id) {
     const Object* obj = &object[object_id];
-    int best_rep = 1;
+    int best_rep = -1;
     int max_score = -1;
     
     for(int rep=1; rep<=REP_NUM; rep++){
@@ -203,7 +201,9 @@ int select_best_replica(int object_id) {
             max_score = score;
             best_rep = rep;
         }
+        std::cerr << "[DEBUG] " << " rep: " << rep << " score: " << score << std::endl;
     }
+    std::cerr << "[DEBUG] " << " best_rep: " << best_rep << std::endl;
     return best_rep;
 }
 
@@ -218,7 +218,6 @@ void read_action()
         request[request_id].prev_id = object[object_id].last_request_point;
         object[object_id].last_request_point = request_id;
         request[request_id].is_done = false;
-        request[request_id].best_rep = select_best_replica(object_id);
     }
 
     static int current_request = 0;
@@ -233,8 +232,9 @@ void read_action()
         printf("0\n");
     } else {
         object_id = request[current_request].object_id;
-        int best_rep = request[current_request].best_rep;
+        int best_rep = select_best_replica(object_id);
         int target_disk = object[object_id].replica[best_rep];
+        int is_read = 0;
         for (int i = 1; i <= N; i++) {
             if (i == target_disk) {
                 int target_pos = object[object_id].unit[best_rep][current_phase + 1];
