@@ -25,6 +25,8 @@ typedef struct Request_ {
     bool is_done;
     int time;
 
+    int rep;
+
     std::string head_movement; 
 } Request;
 
@@ -43,6 +45,8 @@ typedef struct DiskHead_ {
     int pos;            // 当前磁头位置（存储单元编号）
     int last_action;    // 上一次动作类型：0-Jump,1-Pass,2-Read
     int last_token;     // 上一次消耗的令牌数
+
+    int current_phase;
 } DiskHead;
 
 Request request[MAX_REQUEST_NUM];
@@ -219,10 +223,10 @@ int select_best_replica(int object_id) {
     return best_rep;
 }
 
-void do_object_read(int object_id, int &current_phase){
-    int best_rep = select_best_replica(object_id);
+void do_object_read(int object_id, int best_rep){
     int target_disk = object[object_id].replica[best_rep];
     int is_read = 0;
+    int &current_phase = disk_head[target_disk].current_phase;
     for (int i = 1; i <= N; i++) {
         if (i == target_disk) {
             int target_pos = object[object_id].unit[best_rep][current_phase + 1];
@@ -289,12 +293,15 @@ void read_action()
         object[object_id].active_phases.push(request_id);
         request[request_id].is_done = false;
         request[request_id].time = timestamp;
+        request[request_id].rep = -1;
         new_requests.push(request_id);
     }
 
+    while(!new_requests.empty() && request[new_requests.top()].is_done == true) new_requests.pop();
+
     static int current_request = 0;
     static int current_phase = 0;
-    if (!current_request && n_read > 0) {
+    if (!current_request && n_read > 0 && !new_requests.empty()) {
         current_request = new_requests.top();
         new_requests.pop();
     }
@@ -310,38 +317,45 @@ void read_action()
 
     object_id = request[current_request].object_id;
 
-    do_object_read(object_id, current_phase);
+    int best_rep = select_best_replica(object_id);
+    request[current_request].rep = request[current_request].rep == -1 ? best_rep : request[current_request].rep;
+    int target_disk = object[object_id].replica[request[current_request].rep];
+    do_object_read(object_id, request[current_request].rep);
 
     std::vector<int> finished_phases;
 
-    if (current_phase == object[object_id].size) {
-        if (object[object_id].is_delete) {
-            printf("0\n");
-        } else {
-            auto *active_phases = &object[object_id].active_phases;
-            while (!active_phases->empty() && active_phases->front() <= current_request) {
-                finished_phases.push_back(active_phases->front());
-                request[active_phases->front()].is_done = true;
-                active_phases->pop();
-            }
-            int fsize = finished_phases.size();
-            // printf("1\n%d\n", current_request);
-            // std::cerr << "[DEBUG] " << " finished_phases: " << fsize << " current_request: " << current_request << std::endl;
-            printf("%d\n", fsize);
-            // std::cerr << "[OUTPUT] " << " finished_phases: " << fsize << std::endl;
-            for (int i = 0; i < fsize; i++) {
-                printf("%d\n", finished_phases[i]);
-                // std::cerr << finished_phases[i];
-            }
-            // std::cerr << "\n";
-            
-            request[current_request].is_done = true;
-        }
-        current_request = 0;
-        current_phase = 0;
-    } else {
+    if(disk_head[target_disk].current_phase != object[object_id].size) {
         printf("0\n");
+        fflush(stdout);
+        return;
     }
+
+    if (object[object_id].is_delete) {
+        printf("0\n");
+    } else {
+        auto *active_phases = &object[object_id].active_phases;
+        while (!active_phases->empty() && active_phases->front() <= current_request) {
+            finished_phases.push_back(active_phases->front());
+            request[active_phases->front()].is_done = true;
+            active_phases->pop();
+        }
+        int fsize = finished_phases.size();
+        // printf("1\n%d\n", current_request);
+        // std::cerr << "[DEBUG] " << " finished_phases: " << fsize << " current_request: " << current_request << std::endl;
+        printf("%d\n", fsize);
+        // std::cerr << "[OUTPUT] " << " finished_phases: " << fsize << std::endl;
+        for (int i = 0; i < fsize; i++) {
+            printf("%d\n", finished_phases[i]);
+            // std::cerr << finished_phases[i];
+        }
+        // std::cerr << "\n";
+        
+        request[current_request].is_done = true;
+    }
+    current_request = 0;
+    current_phase = 0;
+    disk_head[target_disk].current_phase = 0;
+    
     fflush(stdout);
 }
 
@@ -363,7 +377,7 @@ int main()
 
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G);
 
-    for(int i=1; i<=N; i++) disk_head[i].pos = 1;
+    for(int i=1; i<=N; i++) {disk_head[i].pos = 1; disk_head[i].current_phase = 0;}
 
     for (int i = 1; i <= M; i++) {
         for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
