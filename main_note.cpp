@@ -153,14 +153,27 @@ int calculate_max_contiguous(int disk_id) {
     return max_len;
 }
 
+int calculate_max_space(int disk_id) {
+    int max_space = 0;
+    for (int i = 1; i <= V; i++) {
+        if (disk[disk_id][i] == 0) {
+            max_space++;
+        }
+    }
+    return max_space;
+}
+
 // 选择三个不同磁盘（优先选择连续空间大的）
 std::vector<int> select_disks_for_object(int size) {
     std::vector<std::pair<int, int> > disk_scores;
     // 遍历所有磁盘，计算得分（连续空间 >= size的磁盘才有资格）
     for (int i = 1; i <= N; i++) {
         int contiguous = calculate_max_contiguous(i);
+        int max_space = calculate_max_space(i);
         if (contiguous >= size) {
             disk_scores.emplace_back(contiguous, i);
+        } else if(max_space >= size) {
+            disk_scores.emplace_back(-0x3f3f3f3f + max_space, i);
         }
     }
     // 按连续空间降序排序
@@ -180,7 +193,7 @@ std::vector<int> select_disks_for_object(int size) {
 std::vector<int> allocate_contiguous_blocks(int disk_id, int size, int object_id) {
     // 从磁头当前位置开始搜索（减少未来读取时的移动距离）
     int start = disk_head[disk_id].pos;
-    for (int i = 0; i < V + size; i++) {
+    for (int i = 0; i < V; i++) {
         int pos = (start + i) % V;
         if (pos == 0) pos = V; // 存储单元编号从1开始
         if (disk[disk_id][pos] == 0) {
