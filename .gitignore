@@ -54,4 +54,4 @@ settings.py.example
 
 *.exe
 *.zip
-./main
+main
