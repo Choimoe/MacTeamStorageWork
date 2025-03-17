@@ -18,6 +18,8 @@
 #define REP_NUM (3) // 每个对象的副本数量
 #define FRE_PER_SLICING (1800) // 每个时间片的最大请求数
 #define EXTRA_TIME (105) // 额外时间片
+#define TAG_PHASE (48 + 1)
+#define MAX_TAG_NUM (16 + 1)
 
 // 请求结构体
 typedef struct Request_ {
@@ -38,6 +40,7 @@ typedef struct Object_ {
     int size; // 对象大小
     int last_request_point; // 最后一个请求的指针
     bool is_delete; // 对象是否被标记为删除
+    int tag; // 对象标签
 
     std::queue<int> active_phases; // 活动阶段队列
 } Object;
@@ -63,6 +66,12 @@ int timestamp; // 当前时间戳
 
 DiskHead disk_head[MAX_DISK_NUM]; // 磁头状态数组
 std::stack<int> disk_requests[MAX_DISK_NUM]; // 存储新请求的栈
+
+int fre_del[MAX_TAG_NUM][TAG_PHASE]; // 每个标签的每个阶段删除的对象大小
+int fre_write[MAX_TAG_NUM][TAG_PHASE]; // 每个标签的每个阶段写入的对象大小
+int fre_read[MAX_TAG_NUM][TAG_PHASE]; // 每个标签的每个阶段读取的对象大小
+
+int disk_tag_num[MAX_DISK_NUM][MAX_TAG_NUM]; // 当前磁盘的标签个数
 
 // 时间戳操作
 void timestamp_action()
@@ -120,12 +129,104 @@ void delete_action()
         // 删除对象的副本
         for (int j = 1; j <= REP_NUM; j++) {
             do_object_delete(object[id].unit[j], disk[object[id].replica[j]], object[id].size);
+            disk_tag_num[object[id].replica[j]][object[id].tag]--;
         }
         object[id].is_delete = true; // 标记对象为已删除
     }
 
     fflush(stdout); // 刷新输出缓冲区
 }
+
+// 计算磁盘disk_id的最大连续空闲块长度
+int calculate_max_contiguous(int disk_id) {
+    int max_len = 0, current_len = 0;
+    for (int i = 1; i <= V; i++) {
+        if (disk[disk_id][i] == 0) {
+            current_len++;
+            max_len = std::max(max_len, current_len);
+        } else {
+            current_len = 0;
+        }
+    }
+    // 环形处理：检查首尾连接的情况（例如末尾和开头连续）
+    if (disk[disk_id][V] == 0 && disk[disk_id][1] == 0) {
+        int head = 1, tail = V;
+        while (disk[disk_id][head] == 0 && head <= V) head++;
+        while (disk[disk_id][tail] == 0 && tail >= 1) tail--;
+        max_len = std::max(max_len, (V - tail) + (head - 1) + 2);
+    }
+    return max_len;
+}
+
+int calculate_max_space(int disk_id) {
+    int max_space = 0;
+    for (int i = 1; i <= V; i++) {
+        if (disk[disk_id][i] == 0) {
+            max_space++;
+        }
+    }
+    return max_space;
+}
+
+// 选择三个不同磁盘（优先选择连续空间大的）
+std::vector<int> select_disks_for_object(int id) {
+    std::vector<std::pair<int, int> > disk_scores;
+    // 遍历所有磁盘，计算得分（连续空间 >= size的磁盘才有资格）
+    for (int i = 1; i <= N; i++) {
+        int contiguous = calculate_max_contiguous(i);
+        int max_space = calculate_max_space(i);
+        // std::cerr << "[DEBUG] disk_id: " << i << " contiguous: " << contiguous << " max_space: " << max_space << " tag_num: " << disk_tag_num[i][object[id].tag] << std::endl;
+        if (contiguous >= object[id].size) {
+            disk_scores.emplace_back(contiguous, i);
+            // std::cerr << "[DEBUG] disk_id: " << i << " score: " << disk_tag_num[i][object[id].tag] << std::endl;
+        }
+    }
+    // 按连续空间降序排序
+    std::sort(disk_scores.rbegin(), disk_scores.rend());
+    
+    std::vector<int> selected;
+    for (auto& [score, disk_id] : disk_scores) {
+        if (selected.size() >= 3) break;
+        if (std::find(selected.begin(), selected.end(), disk_id) == selected.end()) {
+            selected.push_back(disk_id);
+        }
+    }
+    return selected;
+}
+
+// 在磁盘disk_id上分配size个连续块（返回分配的存储单元编号列表）
+std::vector<int> allocate_contiguous_blocks(int disk_id, int size, int object_id) {
+    // 从磁头当前位置开始搜索（减少未来读取时的移动距离）
+    int start = disk_head[disk_id].pos;
+    for (int i = 0; i < V; i++) {
+        int pos = (start + i) % V;
+        if (pos == 0) pos = V; // 存储单元编号从1开始
+        if (disk[disk_id][pos] == 0) {
+            bool found = true;
+            std::vector<int> blocks;
+            // 检查后续size个单元是否都空闲
+            for (int j = 0; j < size; j++) {
+                int check_pos = (pos + j) % V;
+                if (check_pos == 0) check_pos = V;
+                if (disk[disk_id][check_pos] != 0) {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) {
+                for (int j = 0; j < size; j++) {
+                    int block_pos = (pos + j) % V;
+                    if (block_pos == 0) block_pos = V;
+                    blocks.push_back(block_pos);
+                    disk[disk_id][block_pos] = object_id; // 标记为已占用
+                }
+                return blocks;
+            }
+        }
+    }
+    return {}; // 空间不足
+}
+
 
 // 写入对象的函数
 void do_object_write(int* object_unit, int* disk_unit, int size, int object_id)
@@ -150,15 +251,23 @@ void write_action()
     int n_write; // 写请求数量
     scanf("%d", &n_write); // 读取写请求的数量
     for (int i = 1; i <= n_write; i++) {
-        int id, size;
-        scanf("%d%d%*d", &id, &size); // 读取对象 ID 和大小
+        int id, size, tag;
+        scanf("%d%d%d", &id, &size, &tag); // 读取对象 ID 和大小
+        object[id].tag = tag; // 设置对象标签
         object[id].last_request_point = 0; // 初始化对象的最后请求指针
+        object[id].size = size; // 设置对象的大小
+        object[id].is_delete = false; // 标记对象为未删除
+        std::vector<int> selected_disks = select_disks_for_object(id);
         for (int j = 1; j <= REP_NUM; j++) {
-            object[id].replica[j] = (id + j) % N + 1; // 计算副本的 ID
+            int disk_id = selected_disks[j - 1];
+            std::vector<int> blocks = allocate_contiguous_blocks(disk_id, size, id);
+            object[id].replica[j] = disk_id; // 计算副本的 ID
             object[id].unit[j] = static_cast<int*>(malloc(sizeof(int) * (size + 1))); // 分配内存以存储对象数据
-            object[id].size = size; // 设置对象的大小
-            object[id].is_delete = false; // 标记对象为未删除
-            do_object_write(object[id].unit[j], disk[object[id].replica[j]], size, id); // 将对象数据写入磁盘
+            for (int _ = 0; _ < size; _++) {
+                object[id].unit[j][_+1] = blocks[_];
+            }
+            disk_tag_num[disk_id][object[id].tag]++;
+            // do_object_write(object[id].unit[j], disk[object[id].replica[j]], size, id); // 将对象数据写入磁盘
         }
 
         printf("%d\n", id); // 打印对象 ID
@@ -342,6 +451,10 @@ bool check_disk_head(int disk_id)//检查当前盘是否空闲
     return false;
 }
 
+int evaluate_request(int object_id) {
+    return timestamp * 105 + object[object_id].active_phases.size() * object[object_id].size;
+}
+
 // 读取操作
 /*
 Origin:
@@ -356,7 +469,7 @@ void read_action()
     int n_read; // 读取请求数量
     int request_id = -1, object_id; // 请求 ID 和对象 ID
     scanf("%d", &n_read); // 读取请求数量
-    static std::stack<int> new_requests; // 存储新请求的栈
+    static std::priority_queue<std::pair<int, int> > new_requests; // 存储新请求的栈
     for (int i = 1; i <= n_read; i++) {
         scanf("%d%d", &request_id, &object_id); // 读取请求 ID 和对象 ID
         request[request_id].object_id = object_id; // 记录请求的对象 ID
@@ -367,7 +480,7 @@ void read_action()
         request[request_id].time = timestamp; // 记录请求时间
         request[request_id].rep = -1; // 初始化副本索引
         request[request_id].disk_id = -1;
-        new_requests.push(request_id); // 将请求 ID 压入栈中
+        new_requests.push(std::make_pair(evaluate_request(object_id), request_id)); // 将请求 ID 压入栈中
         for(int rep=1; rep<=REP_NUM; rep++){
             int disk_id = object[object_id].replica[rep];
             disk_requests[disk_id].push(request_id);
@@ -399,7 +512,8 @@ void read_action()
     while(!new_requests.empty())//分配请求到磁盘，直到磁盘上都有任务，但可能存在有的磁盘未被使用。
     {
         int current_request = 0; // 当前请求 ID
-        current_request = new_requests.top(); // 记录当前请求
+        int rank_value = new_requests.top().first;
+        current_request = new_requests.top().second; // 记录当前请求
         new_requests.pop(); // 从栈中移除当前请求
         if (request[current_request].is_done) continue;
         if (request[current_request].disk_id != -1) continue;
@@ -408,7 +522,7 @@ void read_action()
         int best_rep = select_best_replica_available(object_id, available_disks); // 选择最佳磁盘
         if (best_rep == -1) // 如果没有可用的磁盘，就退出。
         {
-            new_requests.push(current_request);
+            new_requests.push(std::make_pair(rank_value, current_request));
             break;
         }
         request[current_request].rep = request[current_request].rep == -1 ? best_rep : request[current_request].rep; // 更新副本索引
@@ -527,21 +641,21 @@ int main()
     // 读取每个标签的删除请求数量
     for (int i = 1; i <= M; i++) {
         for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
-            scanf("%*d");
+            scanf("%d", &fre_del[i][j]);
         }
     }
 
     // 读取每个标签的写请求数量
     for (int i = 1; i <= M; i++) {
         for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
-            scanf("%*d");
+            scanf("%d", &fre_write[i][j]);
         }
     }
 
     // 读取每个标签的读请求数量
     for (int i = 1; i <= M; i++) {
         for (int j = 1; j <= (T - 1) / FRE_PER_SLICING + 1; j++) {
-            scanf("%*d");
+            scanf("%d", &fre_read[i][j]);
         }
     }
 
