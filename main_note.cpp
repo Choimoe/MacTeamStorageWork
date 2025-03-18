@@ -73,6 +73,8 @@ int fre_read[MAX_TAG_NUM][TAG_PHASE]; // 每个标签的每个阶段读取的对
 
 int disk_tag_num[MAX_DISK_NUM][MAX_TAG_NUM]; // 当前磁盘的标签个数
 
+bool available_disks[MAX_DISK_NUM];//储存可用磁头的数组
+
 // 时间戳操作
 void timestamp_action()
 {
@@ -364,78 +366,69 @@ int select_best_replica_available(int object_id, bool* available_disks) {
     return best_rep; // 返回最佳副本
 }
 
-
-
 // 执行对象读取操作
-void do_object_read(int object_id, int target_disk, std::string &head_movement){
+int do_object_read(int object_id, int target_disk, std::string &head_movement, int remain_token){
     int is_read = 0; // 读取标志
     int &current_phase = disk_head[target_disk].current_phase; // 当前阶段
     int best_rep = -1; // 获取最佳副本
     for (int i = 1; i <= REP_NUM; i++)
-    {
         if (object[object_id].replica[i] == target_disk)
-        {
             best_rep = i;
-        }
+
+    int target_pos = object[object_id].unit[best_rep][current_phase + 1]; // 获取目标位置
+    if (target_pos == 0) {
+        std::cerr << "[Error] " << " target_pos: " << target_pos << " object_id: " << object_id << " object->size: " << object[object_id].size<< " current_phase: " << current_phase << " target_disk: " << target_disk << std::endl;
     }
-    for (int i = 1; i <= N; i++) 
-    {
-        if (i == target_disk) 
-        { // 如果是目标磁盘
-            int target_pos = object[object_id].unit[best_rep][current_phase + 1]; // 获取目标位置
-            if (target_pos == 0)
-            {
-                std::cerr << "[Error] " << " target_pos: " << target_pos << " object_id: " << object_id << " object->size: " << object[object_id].size<< " current_phase: " << current_phase << " target_disk: " << target_disk << std::endl;
-            }
-            int remain_token = G; // 剩余令牌数
-            if (target_pos != disk_head[target_disk].pos) { // 如果目标位置与当前磁头位置不同
-                int pass_cost = calculate_move_cost(disk_head[target_disk].pos, target_pos); // 计算移动成本
-                if (pass_cost > G) { // 如果移动成本大于剩余令牌
-                    remain_token -= G; // 消耗所有令牌
-                    disk_head[target_disk].pos = target_pos; // 更新磁头位置
-                    disk_head[target_disk].last_action = 0; // 更新上一次动作类型
-                    disk_head[target_disk].last_token = G; // 更新上一次消耗的令牌数
-                    // printf("j %d\n", target_pos); // 输出跳转命令
-                    head_movement += "j " + std::to_string(target_pos) + "\n"; // 记录磁头移动
-                    continue; // 继续下一个循环
-                } else {
-                    remain_token -= pass_cost; // 消耗移动成本
-                    for (int i = 1; i <= pass_cost; i++) {
-                        // printf("p"); // 输出通过命令
-                        // std::cerr << "[OUTPUT] " << " pass" << std::endl;
-                        head_movement += "p"; // 记录磁头移动
-                    }
-                    disk_head[target_disk].pos = target_pos; // 更新磁头位置
-                    disk_head[target_disk].last_action = 1; // 更新上一次动作类型
-                    disk_head[target_disk].last_token = 1; // 更新上一次消耗的令牌数
-                }
-            }
-            while(true) {
-                // std::cerr << remain_token << " " << current_phase << " " << object[object_id].size << std::endl;
-                int move_cost = (disk_head[target_disk].last_action != 2) ? 64 : 
-                    std::max(16, (int)ceil(disk_head[target_disk].last_token * 0.8)); // 计算移动成本
-                target_pos = object[object_id].unit[best_rep][current_phase + 1]; // 获取目标位置
-                if(move_cost > remain_token || current_phase == object[object_id].size || target_pos != disk_head[target_disk].pos) {
-                    if(target_pos != disk_head[target_disk].pos) {
-                        // std::cerr << "[DEBUG] " << " move_cost: " << move_cost << " remain_token: " << remain_token << " target_disk: " << target_disk << std::endl;
-                    }
-                    // printf("#\n"); // 输出 #
-                    head_movement += "#\n"; // 记录磁头移动
-                    // std::cerr << "---break---" <<disk_head[target_disk].current_phase<<":"<< disk_head[target_disk].current_request<<std::endl;
-                    break; // 结束循环
-                }
-                current_phase++; // 进入下一个阶段
-                // printf("r"); // 输出读取命令
-                head_movement += "r"; // 记录磁头移动
-                disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1; // 更新磁头位置
-                disk_head[target_disk].last_action = 2; // 更新上一次动作类型
-                disk_head[target_disk].last_token = move_cost; // 更新上一次消耗的令牌数
-                remain_token -= move_cost; // 消耗移动成本
-            }
+    if (target_pos != disk_head[target_disk].pos) { // 如果目标位置与当前磁头位置不同
+        int pass_cost = calculate_move_cost(disk_head[target_disk].pos, target_pos); // 计算移动成本
+        if (remain_token < std::min(pass_cost, G)) {
+            return 0;
+        }
+        if (pass_cost > G) { // 如果移动成本大于剩余令牌
+            remain_token -= G; // 消耗所有令牌
+            disk_head[target_disk].pos = target_pos; // 更新磁头位置
+            disk_head[target_disk].last_action = 0; // 更新上一次动作类型
+            disk_head[target_disk].last_token = G; // 更新上一次消耗的令牌数
+            // printf("j %d\n", target_pos); // 输出跳转命令
+            head_movement += "j " + std::to_string(target_pos) + "\n"; // 记录磁头移动
+            return -1; // 继续下一个循环
         } else {
-            // printf("#\n"); // 如果不是目标磁盘，输出 #
+            remain_token -= pass_cost; // 消耗移动成本
+            for (int i = 1; i <= pass_cost; i++) {
+                // printf("p"); // 输出通过命令
+                // std::cerr << "[OUTPUT] " << " pass" << std::endl;
+                head_movement += "p"; // 记录磁头移动
+            }
+            disk_head[target_disk].pos = target_pos; // 更新磁头位置
+            disk_head[target_disk].last_action = 1; // 更新上一次动作类型
+            disk_head[target_disk].last_token = 1; // 更新上一次消耗的令牌数
         }
     }
+    while(true) {
+        // std::cerr << remain_token << " " << current_phase << " " << object[object_id].size << std::endl;
+        int move_cost = (disk_head[target_disk].last_action != 2) ? 64 : 
+            std::max(16, (int)ceil(disk_head[target_disk].last_token * 0.8)); // 计算移动成本
+        target_pos = object[object_id].unit[best_rep][current_phase + 1]; // 获取目标位置
+        if(move_cost > remain_token || current_phase == object[object_id].size || target_pos != disk_head[target_disk].pos) {
+            if(target_pos != disk_head[target_disk].pos) {
+                // std::cerr << "[DEBUG] " << " move_cost: " << move_cost << " remain_token: " << remain_token << " target_disk: " << target_disk << std::endl;
+            }
+            if(move_cost > remain_token) {
+                return 0;
+            }
+            // printf("#\n"); // 输出 #
+            // std::cerr << "---break---" <<disk_head[target_disk].current_phase<<":"<< disk_head[target_disk].current_request<<std::endl;
+            break; // 结束循环
+        }
+        current_phase++; // 进入下一个阶段
+        // printf("r"); // 输出读取命令
+        head_movement += "r"; // 记录磁头移动
+        disk_head[target_disk].pos = (disk_head[target_disk].pos % V) + 1; // 更新磁头位置
+        disk_head[target_disk].last_action = 2; // 更新上一次动作类型
+        disk_head[target_disk].last_token = move_cost; // 更新上一次消耗的令牌数
+        remain_token -= move_cost; // 消耗移动成本
+    }
+    return remain_token;
 }
 void reset_disk_head(int disk_id)//重置磁头，等待下一个任务
 {
@@ -444,15 +437,69 @@ void reset_disk_head(int disk_id)//重置磁头，等待下一个任务
 }
 bool check_disk_head(int disk_id)//检查当前盘是否空闲
 {
-    if(disk_head[disk_id].current_request == -1)
-    {
+    if(disk_head[disk_id].current_request == -1) {
         return true;
     }
     return false;
 }
 
 int evaluate_request(int object_id) {
-    return timestamp * 105 + object[object_id].active_phases.size() * object[object_id].size;
+    // 测了几个数（100 15 10 7 1） 发现10最优
+    return timestamp * 10 + object[object_id].active_phases.size() * object[object_id].size;
+}
+
+bool set_next_request(int disk_id) {
+    while (!disk_requests[disk_id].empty()) {
+        // std::cerr << "[DEBUG] " << " disk_requests[disk_id].size(): " << disk_requests[disk_id].size() << std::endl;
+        int current_request = disk_requests[disk_id].top();
+        disk_requests[disk_id].pop();
+        if (request[current_request].is_done) continue;
+        if (request[current_request].disk_id != -1) continue;
+        if (object[request[current_request].object_id].is_delete) continue;
+        disk_head[disk_id].current_request = current_request;
+        request[current_request].disk_id = disk_id;
+        available_disks[disk_id] = false; //标记磁盘为忙碌
+        // std::cerr << "[DEBUG] " <<request[current_request].disk_id << " ok current_request: " << current_request << std::endl;
+        return true;
+    }
+    return false;
+}
+
+void complete_request(int object_id, int current_request, std::vector<int> &finished_requests) {
+    auto *active_phases = &object[object_id].active_phases; // 获取活动阶段队列
+    // std::cerr <<" object_id: " << object_id << " active_phases: " << active_phases->empty() <<std::endl;
+    while (!active_phases->empty() && active_phases->front() <= current_request) { // 移除已完成的请求
+        finished_requests.push_back(active_phases->front()); // 记录已完成的请求
+        request[active_phases->front()].is_done = true; // 标记请求为完成
+        active_phases->pop(); // 从队列中移除请求
+    }
+    request[current_request].is_done = true;
+}
+
+void output_read(std::vector<int> &finished_requests, std::string *head_movement){
+    for (int i=1; i<=N; i++) {
+        if (head_movement[i].empty()) {
+            head_movement[i] = "#\n";
+        }
+    }
+    
+    for (int i = 1; i <= N; i++) {
+        if(head_movement[i][0] != 'j' && head_movement[i][0] != '#') head_movement[i] += "#\n";
+        printf("%s", head_movement[i].c_str()); // 输出磁头移动记录
+        // std::cerr << "[OUTPUT] " << head_movement[i];
+    }
+    int fsize = finished_requests.size(); // 获取已完成请求的数量
+
+    // std::cerr << "[DEBUG] " << " ******* "<< fsize << std::endl;
+
+
+    printf("%d\n", fsize); // 输出已完成请求的数量
+    // std::cerr << "[OUTPUT] " << fsize << std::endl;
+    for (int i = 0; i < fsize; i++) {
+        // std::cerr << "[DEBUG] " << " finished_requests[" << i << "]: " << finished_requests[i] << std::endl;
+        printf("%d\n", finished_requests[i]); // 输出已完成请求的 ID
+        // std::cerr << "[OUTPUT] " << finished_requests[i] << std::endl;
+    }
 }
 
 // 读取操作
@@ -472,10 +519,10 @@ void read_action()
     static std::priority_queue<std::pair<int, int> > new_requests; // 存储新请求的栈
     for (int i = 1; i <= n_read; i++) {
         scanf("%d%d", &request_id, &object_id); // 读取请求 ID 和对象 ID
-        request[request_id].object_id = object_id; // 记录请求的对象 ID
-        request[request_id].prev_id = object[object_id].last_request_point; // 记录前一个请求 ID
         object[object_id].last_request_point = request_id; // 更新对象的最后请求指针
         object[object_id].active_phases.push(request_id); // 将请求 ID 添加到活动阶段队列
+        request[request_id].object_id = object_id; // 记录请求的对象 ID
+        request[request_id].prev_id = object[object_id].last_request_point; // 记录前一个请求 ID
         request[request_id].is_done = false; // 标记请求为未完成
         request[request_id].time = timestamp; // 记录请求时间
         request[request_id].rep = -1; // 初始化副本索引
@@ -504,8 +551,6 @@ void read_action()
 
     std::vector<int> finished_requests; // 存储已完成的阶段
     std::string head_movement[MAX_DISK_NUM]; // 存储磁头移动记录
-
-    bool available_disks[MAX_DISK_NUM];//储存可用磁头的数组
     for (int i = 1; i <= N; i++) {
         available_disks[i] = check_disk_head(i);
     }
@@ -517,6 +562,7 @@ void read_action()
         new_requests.pop(); // 从栈中移除当前请求
         if (request[current_request].is_done) continue;
         if (request[current_request].disk_id != -1) continue;
+        if (object[request[current_request].object_id].is_delete) continue;
         
         object_id = request[current_request].object_id; // 获取当前请求的对象 ID
         int best_rep = select_best_replica_available(object_id, available_disks); // 选择最佳磁盘
@@ -533,83 +579,34 @@ void read_action()
         disk_head[target_disk].current_request = current_request; //分配任务
         available_disks[target_disk] = false; //标记磁盘为忙碌
     }
-    for (int i = 1; i <= N; i++) {
-        if (available_disks[i])
-        {
-            // std::cerr << "[DEBUG] " << " available disk_id: " << i << std::endl;
-            while (!disk_requests[i].empty())
-            {
-                // std::cerr << "[DEBUG] " << " disk_requests[i].size(): " << disk_requests[i].size() << std::endl;
-                int current_request = disk_requests[i].top();
-                disk_requests[i].pop();
-                if (request[current_request].is_done) continue;
-                if (request[current_request].disk_id != -1) continue;
-                disk_head[i].current_request = current_request;
-                request[current_request].disk_id = i;
-                available_disks[i] = false; //标记磁盘为忙碌
-                // std::cerr << "[DEBUG] " <<request[current_request].disk_id << " ok current_request: " << current_request << std::endl;
-                break;
-            }
-        }
-    }
 
     for (int i = 1; i <= N; i++) 
     {
-        if (available_disks[i]) continue;//说明磁盘空闲，不进行读取
+        if (available_disks[i] && !set_next_request(i)) continue;
         int target_disk = i;//获取当前磁盘
+        int remain_token = G;
         int current_request = disk_head[target_disk].current_request;//获取当前磁盘要处理的请求
         int object_id = request[current_request].object_id;
         // std::cerr << " target_disk: " << target_disk <<" is processing " <<current_request<< " " <<disk_head[target_disk].current_phase<< "/" << object[object_id].size << " " << request[current_request].disk_id << std::endl;
-        do_object_read(object_id, target_disk, head_movement[target_disk]); // 执行对象读取操作
+        remain_token = do_object_read(object_id, target_disk, head_movement[target_disk], remain_token); // 执行对象读取操作
         if(disk_head[target_disk].current_phase != object[object_id].size) { // 如果当前阶段未达到对象大小
             // std::cerr << " target_disk: " << target_disk <<" is not finished" << std::endl;
             continue;
         }
 
         if (object[object_id].is_delete) { // 如果对象被删除
-            // std::cerr << " target_disk: " << target_disk << " object_id: " << object_id << " is deleted" << std::endl;
             reset_disk_head(target_disk); // 重置磁头
             continue;
         }
 
-        auto *active_phases = &object[object_id].active_phases; // 获取活动阶段队列
-        // std::cerr <<" object_id: " << object_id << " active_phases: " << active_phases->empty() <<std::endl;
-        while (!active_phases->empty() && active_phases->front() <= current_request) { // 移除已完成的请求
-            finished_requests.push_back(active_phases->front()); // 记录已完成的请求
-            request[active_phases->front()].is_done = true; // 标记请求为完成
-            active_phases->pop(); // 从队列中移除请求
-        }
-        request[current_request].is_done = true; // 标记当前请求为完成
+        complete_request(object_id, current_request, finished_requests);
         // std::cerr << " target_disk: " << target_disk << " object_id: " << object_id << " is finished" << std::endl;
 
         current_request = 0; // 重置当前请求
         reset_disk_head(target_disk); // 重置磁头
     }
-    for (int i=1; i<=N; i++) {
-        if (head_movement[i].empty()) {
-            head_movement[i] = "#\n";
-        }
-    }
-    for (int i=1; i<=N; i++) {
-            // std::cerr << "[DEBUG] " << " head_movement[" << i << "]: " << head_movement[i];
-    }
     
-    for (int i = 1; i <= N; i++) {
-            printf("%s", head_movement[i].c_str()); // 输出磁头移动记录
-            // std::cerr << "[OUTPUT] " << head_movement[i];
-    }
-    int fsize = finished_requests.size(); // 获取已完成请求的数量
-
-    // std::cerr << "[DEBUG] " << " ******* "<< fsize << std::endl;
-
-
-    printf("%d\n", fsize); // 输出已完成请求的数量
-    // std::cerr << "[OUTPUT] " << fsize << std::endl;
-    for (int i = 0; i < fsize; i++) {
-        // std::cerr << "[DEBUG] " << " finished_requests[" << i << "]: " << finished_requests[i] << std::endl;
-        printf("%d\n", finished_requests[i]); // 输出已完成请求的 ID
-        // std::cerr << "[OUTPUT] " << finished_requests[i] << std::endl;
-    }
+    output_read(finished_requests, head_movement);
     fflush(stdout); // 刷新输出缓冲区
 }
 
