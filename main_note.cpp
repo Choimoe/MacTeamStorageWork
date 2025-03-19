@@ -59,7 +59,8 @@ Request request[MAX_REQUEST_NUM]; // 请求数组
 Object object[MAX_OBJECT_NUM]; // 对象数组
 
 int T, M, N, V, G; // 时间片、对象标签、硬盘数量、存储单元、令牌数量
-int disk[MAX_DISK_NUM][MAX_DISK_SIZE]; // 磁盘数据
+int disk_obj_id[MAX_DISK_NUM][MAX_DISK_SIZE]; // 磁盘上存储的obj的id
+int disk_block_id[MAX_DISK_NUM][MAX_DISK_SIZE]; // 磁盘上存储的obj的block的编号
 int disk_point[MAX_DISK_NUM]; // 磁盘指针
 int timestamp; // 当前时间戳
 
@@ -84,12 +85,20 @@ void timestamp_action()
     fflush(stdout); // 刷新输出缓冲区
 }
 
-// 删除对象的函数
-void do_object_delete(const int* object_unit, int* disk_unit, int size)
+/**
+ * 删除对象在disk_id这块磁盘上的数据（obj_id 与 block_id）。
+ * @param object_unit 对象的存储单元下标
+ * @param disk_id 磁盘编号
+ * @param size 对象大小
+ */
+void do_object_delete(const int* object_unit, const int disk_id, int size)
 {
     for (int i = 1; i <= size; i++) {
-        disk_unit[object_unit[i]] = 0; // 将磁盘单元标记为 0（删除）
+        // disk_obj_unit[object_unit[i]] = 0; // 将磁盘单元标记为 0（删除）
+        disk_obj_id[disk_id][object_unit[i]] = 0; //清空磁盘obj_id
+        disk_block_id[disk_id][object_unit[i]] = 0; //清空磁盘 block_id
     }
+
 }
 
 // 删除操作
@@ -128,7 +137,8 @@ void delete_action()
         }
         // 删除对象的副本
         for (int j = 1; j <= REP_NUM; j++) {
-            do_object_delete(object[id].unit[j], disk[object[id].replica[j]], object[id].size);
+            // do_object_delete(object[id].unit[j], disk_obj_id[object[id].replica[j]], disk_block_id[] ,object[id].size);
+            do_object_delete(object[id].unit[j], object[id].replica[j], object[id].size);
             disk_tag_num[object[id].replica[j]][object[id].tag]--;
         }
         object[id].is_delete = true; // 标记对象为已删除
@@ -141,7 +151,7 @@ void delete_action()
 int calculate_max_contiguous(int disk_id) {
     int max_len = 0, current_len = 0;
     for (int i = 1; i <= V; i++) {
-        if (disk[disk_id][i] == 0) {
+        if (disk_obj_id[disk_id][i] == 0) {
             current_len++;
             max_len = std::max(max_len, current_len);
         } else {
@@ -149,10 +159,10 @@ int calculate_max_contiguous(int disk_id) {
         }
     }
     // 环形处理：检查首尾连接的情况（例如末尾和开头连续）
-    if (disk[disk_id][V] == 0 && disk[disk_id][1] == 0) {
+    if (disk_obj_id[disk_id][V] == 0 && disk_obj_id[disk_id][1] == 0) {
         int head = 1, tail = V;
-        while (disk[disk_id][head] == 0 && head <= V) head++;
-        while (disk[disk_id][tail] == 0 && tail >= 1) tail--;
+        while (disk_obj_id[disk_id][head] == 0 && head <= V) head++;
+        while (disk_obj_id[disk_id][tail] == 0 && tail >= 1) tail--;
         max_len = std::max(max_len, (V - tail) + (head - 1) + 2);
     }
     return max_len;
@@ -161,7 +171,7 @@ int calculate_max_contiguous(int disk_id) {
 int calculate_max_space(int disk_id) {
     int max_space = 0;
     for (int i = 1; i <= V; i++) {
-        if (disk[disk_id][i] == 0) {
+        if (disk_obj_id[disk_id][i] == 0) {
             max_space++;
         }
     }
@@ -194,21 +204,28 @@ std::vector<int> select_disks_for_object(int id) {
     return selected;
 }
 
-// 在磁盘disk_id上分配size个连续块（返回分配的存储单元编号列表）
-std::vector<int> allocate_contiguous_blocks(int disk_id, int size, int object_id) {
+/**
+ * 在磁盘disk_id上分配size个连续块
+ * @param disk_id 磁盘编号
+ * @param size 对象大小
+ * @param object_id 对象编号
+ * @param reverse_blocks 是否翻转对象块
+ * @return 返回分配的存储单元编号列表
+ */
+std::vector<int> allocate_contiguous_blocks(int disk_id, int size, int object_id, bool reverse_blocks) {
     // 从磁头当前位置开始搜索（减少未来读取时的移动距离）
     int start = disk_head[disk_id].pos;
     for (int i = 0; i < V; i++) {
         int pos = (start + i) % V;
         if (pos == 0) pos = V; // 存储单元编号从1开始
-        if (disk[disk_id][pos] == 0) {
+        if (disk_obj_id[disk_id][pos] == 0) {
             bool found = true;
             std::vector<int> blocks;
             // 检查后续size个单元是否都空闲
             for (int j = 0; j < size; j++) {
                 int check_pos = (pos + j) % V;
                 if (check_pos == 0) check_pos = V;
-                if (disk[disk_id][check_pos] != 0) {
+                if (disk_obj_id[disk_id][check_pos] != 0) {
                     found = false;
                     break;
                 }
@@ -218,7 +235,8 @@ std::vector<int> allocate_contiguous_blocks(int disk_id, int size, int object_id
                     int block_pos = (pos + j) % V;
                     if (block_pos == 0) block_pos = V;
                     blocks.push_back(block_pos);
-                    disk[disk_id][block_pos] = object_id; // 标记为已占用
+                    disk_obj_id[disk_id][block_pos] = object_id; // 填充对象编号
+                    disk_block_id[disk_id][block_pos] = reverse_blocks ? size - j : j + 1; //填充对象块编号
                 }
                 return blocks;
             }
@@ -263,7 +281,7 @@ void write_action()
         std::vector<int> selected_disks = select_disks_for_object(id);
         for (int j = 1; j <= REP_NUM; j++) {
             int disk_id = selected_disks[j - 1];
-            std::vector<int> blocks = allocate_contiguous_blocks(disk_id, size, id);
+            std::vector<int> blocks = allocate_contiguous_blocks(disk_id, size, id, j & 1); //奇数翻转，偶数不变
             object[id].replica[j] = disk_id; // 计算副本的 ID
             object[id].unit[j] = static_cast<int*>(malloc(sizeof(int) * (size + 1))); // 分配内存以存储对象数据
             for (int _ = 0; _ < size; _++) {
