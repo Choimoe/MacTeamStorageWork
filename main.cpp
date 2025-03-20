@@ -8,6 +8,8 @@
 #include <vector>
 #include <queue>
 #include <cmath>
+#include <unordered_map>
+#include <tuple>
 
 #define MAX_DISK_NUM (10 + 1)
 #define MAX_DISK_SIZE (16384 + 1)
@@ -16,14 +18,15 @@
 #define REP_NUM (3)
 #define FRE_PER_SLICING (1800)
 #define EXTRA_TIME (105)
+#define TAG_PHASE (48 + 1)
+#define MAX_TAG_NUM (16 + 1)
 
 typedef struct Request_ {
     int object_id;
     int prev_id;
     bool is_done;
 
-    // 选择的最佳副本
-    int best_rep;
+    int time;
 } Request;
 
 typedef struct Object_ {
@@ -40,7 +43,7 @@ typedef struct DiskHead_ {
     int pos;            // 当前磁头位置（存储单元编号）
     int last_action;    // 上一次动作类型：0-Jump,1-Pass,2-Read
     int last_token;     // 上一次消耗的令牌数
-    std::multiset<std::pair<int, int>> token_queue;
+    std::multiset<std::tuple<int, int, int>> token_queue;
 } DiskHead;
 
 Request request[MAX_REQUEST_NUM];
@@ -51,13 +54,15 @@ int disk[MAX_DISK_NUM][MAX_DISK_SIZE];
 int disk_point[MAX_DISK_NUM];
 
 DiskHead disk_head[MAX_DISK_NUM];
+int timestamp;
 
-void timestamp_action()
-{
-    int timestamp;
-    scanf("%*s%d", &timestamp);
-    printf("TIMESTAMP %d\n", timestamp);
+// 处理时间戳更新操作
+void timestamp_action() {
+    int cur_time;
 
+    scanf("%*s%d", &cur_time);
+    printf("TIMESTAMP %d\n", cur_time);
+    timestamp = cur_time;
     fflush(stdout);
 }
 
@@ -311,6 +316,15 @@ int select_best_replica(int object_id) {
     return best_rep;
 }
 
+double current_score(int request_id) {
+    int object_id = request[request_id].object_id;
+    int timex = timestamp - request[request_id].time;
+    double fx = 0;
+    if (timex <= 10) fx = 1.0 - 0.005 * timex;
+    else if (timex <= 105) fx = 1.05 - 0.01 * timex;
+    return fx * (object[object_id].size + 1.0) * 0.5;
+}
+
 void read_action()
 {
     int n_read;
@@ -323,18 +337,20 @@ void read_action()
         object[object_id].last_request_point = request_id;
         object[object_id].request_queue.push(request_id);
         request[request_id].is_done = false;
-        request[request_id].best_rep = select_best_replica(object_id);
+        request[request_id].time = timestamp;
         for (int j = 1; j <= REP_NUM; j++) {
-            auto it = disk_head[object[object_id].replica[j]].token_queue.lower_bound(std::make_pair(object[object_id].unit[j][1], request_id));
-            if (it != disk_head[object[object_id].replica[j]].token_queue.end()  && it->first == object[object_id].unit[j][1]) {
+            auto it = disk_head[object[object_id].replica[j]].token_queue.lower_bound(std::make_tuple(object[object_id].unit[j][1], request_id, -1));
+            if (it != disk_head[object[object_id].replica[j]].token_queue.end()  && std::get<0>(*it) == object[object_id].unit[j][1]) {
                 disk_head[object[object_id].replica[j]].token_queue.erase(it);
             }
-            disk_head[object[object_id].replica[j]].token_queue.insert(std::make_pair(object[object_id].unit[j][1], -request_id));
+            disk_head[object[object_id].replica[j]].token_queue.insert(std::make_tuple(object[object_id].unit[j][1], -request_id, 0));
         }
     }
 
     static int current_request = 0;
     static int current_phase = 0;
+    double total_score = 0, score_cnt = 0;
+
     if (!current_request && n_read > 0) {
         current_request = request_id;
     }
@@ -345,25 +361,37 @@ void read_action()
     for (int i = 1; i <= N; i++) {
         int head_pos = disk_head[i].pos;
         int remain_token = G;
+        int last_request_id = 0, cnt = 0;
+        auto next_request = disk_head[i].token_queue.begin();
         // std::cerr << "[DEBUG] disk " << i << ": head_pos: " << head_pos << std::endl;
         while (remain_token > 0) {
             if (disk_head[i].token_queue.empty()) break;
-            auto next_request = disk_head[i].token_queue.upper_bound(std::make_pair(head_pos, -MAX_REQUEST_NUM));
+            next_request = disk_head[i].token_queue.upper_bound(std::make_tuple(head_pos, -MAX_REQUEST_NUM, -1));
             if (next_request == disk_head[i].token_queue.end()) {
                 next_request = disk_head[i].token_queue.begin();
             }
-            int object_id = request[-next_request->second].object_id;
-            if (object[object_id].is_delete || request[-next_request->second].is_done) {
+            int object_id = request[-std::get<1>(*next_request)].object_id;
+            if (object[object_id].is_delete || request[-std::get<1>(*next_request)].is_done) {
                 disk_head[i].token_queue.erase(next_request);
                 continue;
             }
+            double next_score = current_score(-std::get<1>(*next_request));
+            total_score += next_score; score_cnt++;
+            if (next_score < total_score / score_cnt * 0.85) {
+                disk_head[i].token_queue.erase(next_request);
+                continue;
+            }
+            // if (std::get<2>(*next_request) != 0) {
+            //     std::cerr << "[DEBUG] request_id: [" << -std::get<1>(*next_request) << "] object_id: " << object_id << " (remain " << object[object_id].size - std::get<2>(*next_request) << " blocks)" << " is_delete: " << object[object_id].is_delete << " is_done: " << request[-std::get<1>(*next_request)].is_done << std::endl;
+            // }
+            last_request_id = -std::get<1>(*next_request);
             // std::cerr << "[DEBUG]         next_request: [" << next_request->first << "] request_id: " << -next_request->second << " is_done: " << request[-next_request->second].is_done << std::endl;
             //jump to next request
-            int pass_cost = calculate_move_cost(disk_head[i].pos, next_request->first);
+            int pass_cost = calculate_move_cost(disk_head[i].pos, std::get<0>(*next_request));
             if (remain_token < std::min(G, pass_cost)) break;
             if (pass_cost > G) {
-                movement[i] = "j " + std::to_string(next_request->first) + "\n";
-                disk_head[i].pos = next_request->first;
+                movement[i] = "j " + std::to_string(std::get<0>(*next_request)) + "\n";
+                disk_head[i].pos = std::get<0>(*next_request);
                 disk_head[i].last_action = 0;
                 disk_head[i].last_token = G;
                 remain_token -= G;
@@ -376,19 +404,19 @@ void read_action()
                 disk_head[i].last_token = 1;
                 remain_token -= pass_cost;
             }
-            int cnt = 0;
+            cnt = std::get<2>(*next_request);
             while (true) {
                 int move_cost = (disk_head[i].last_action != 2) ? 64 : 
                     std::max(16, (int)ceil(disk_head[i].last_token * 0.8));
-                int cur_object_id = request[-next_request->second].object_id;
+                int cur_object_id = request[-std::get<1>(*next_request)].object_id;
                 // std::cerr << "[DEBUG]         read current_pos: [" << disk_head[i].pos << "](" << disk[i][disk_head[i].pos] << ") move_cost: " << move_cost << " remain_token: " << remain_token << std::endl;
                 if (cnt == object[cur_object_id].size) {
                     // finished_request.push_back(-next_request->second);
-                    request[-next_request->second].is_done = true;
+                    request[-std::get<1>(*next_request)].is_done = true;
                     // std::cerr << "[DEBUG]         finished_request: " << -next_request->second << std::endl;
                     while (!object[cur_object_id].request_queue.empty()) {
                         int req = object[cur_object_id].request_queue.front();
-                        if (req > -next_request->second) break;
+                        if (req > -std::get<1>(*next_request)) break;
                         finished_request.push_back(req);
                         object[cur_object_id].request_queue.pop();
                         request[req].is_done = true;
@@ -397,7 +425,7 @@ void read_action()
                     break;
                 }
                 if (move_cost > remain_token) {
-                    remain_token = 0;
+                    remain_token = -1;
                     break;
                 }
                 cnt++;
@@ -409,7 +437,11 @@ void read_action()
                 remain_token -= move_cost;
             }
         }
-        std::cerr << "[DEBUG] remain_token: " << remain_token << "/" << G << " (" << (double)remain_token/G*100 << "%)" << std::endl;
+        if (remain_token == -1 && !disk_head[i].token_queue.empty() && next_request != disk_head[i].token_queue.end()) {
+            disk_head[i].token_queue.erase(next_request);
+            disk_head[i].token_queue.insert(std::make_tuple(disk_head[i].pos, -last_request_id, cnt));
+        }
+        // std::cerr << "[DEBUG] remain_token: " << remain_token << "/" << G << " (" << (double)remain_token/G*100 << "%)" << std::endl;
     }
 
     // std::cerr << "[DEBUG] movement: " << std::endl;
