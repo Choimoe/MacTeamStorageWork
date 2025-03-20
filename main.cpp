@@ -6,6 +6,8 @@
 #include <iostream>
 #include <set>
 #include <vector>
+#include <queue>
+#include <cmath>
 
 #define MAX_DISK_NUM (10 + 1)
 #define MAX_DISK_SIZE (16384 + 1)
@@ -231,12 +233,11 @@ void write_action()
         for (int j = 1; j <= REP_NUM; j++) {
             int disk_id = selected_disks[j - 1];
             std::vector<int> blocks = allocate_contiguous_blocks(disk_id, size, id);
-            object[id].replica[j] = disk_id; // 计算副本的 ID
+            object[id].replica[j] = disk_id;
             object[id].unit[j] = static_cast<int*>(malloc(sizeof(int) * (size + 1))); // 分配内存以存储对象数据
             for (int _ = 0; _ < size; _++) {
                 object[id].unit[j][_+1] = blocks[_];
             }
-            // do_object_write(object[id].unit[j], disk[object[id].replica[j]], size, id); // 将对象数据写入磁盘
         }
 
         printf("%d\n", id); // 打印对象 ID
@@ -324,12 +325,12 @@ void read_action()
         request[request_id].is_done = false;
         request[request_id].best_rep = select_best_replica(object_id);
         for (int j = 1; j <= REP_NUM; j++) {
-            disk_head[object[object_id].replica[j]].token_queue.insert(std::make_pair(object[object_id].unit[j][1], request_id));
+            auto it = disk_head[object[object_id].replica[j]].token_queue.lower_bound(std::make_pair(object[object_id].unit[j][1], request_id));
+            if (it != disk_head[object[object_id].replica[j]].token_queue.end()  && it->first == object[object_id].unit[j][1]) {
+                disk_head[object[object_id].replica[j]].token_queue.erase(it);
+            }
+            disk_head[object[object_id].replica[j]].token_queue.insert(std::make_pair(object[object_id].unit[j][1], -request_id));
         }
-        // std::cerr << "[DEBUG] request_id: " << request_id << " object_id: " << object_id << std::endl;
-        // for (int j = 1; j <= REP_NUM; j++) {
-        //     std::cerr << "[DEBUG]         need disk " << object[object_id].replica[j] << ": " << object[object_id].unit[j][1] << " ~ " << object[object_id].unit[j][object[object_id].size] << std::endl;
-        // }
     }
 
     static int current_request = 0;
@@ -347,16 +348,16 @@ void read_action()
         // std::cerr << "[DEBUG] disk " << i << ": head_pos: " << head_pos << std::endl;
         while (remain_token > 0) {
             if (disk_head[i].token_queue.empty()) break;
-            auto next_request = disk_head[i].token_queue.upper_bound(std::make_pair(head_pos, 0));
+            auto next_request = disk_head[i].token_queue.upper_bound(std::make_pair(head_pos, -MAX_REQUEST_NUM));
             if (next_request == disk_head[i].token_queue.end()) {
                 next_request = disk_head[i].token_queue.begin();
             }
-            int object_id = request[next_request->second].object_id;
-            // std::cerr << "[DEBUG]         next_request: [" << next_request->first << "] request_id: " << next_request->second << " is_done: " << request[next_request->second].is_done << std::endl;
-            if (object[object_id].is_delete || request[next_request->second].is_done) {
+            int object_id = request[-next_request->second].object_id;
+            if (object[object_id].is_delete || request[-next_request->second].is_done) {
                 disk_head[i].token_queue.erase(next_request);
                 continue;
             }
+            // std::cerr << "[DEBUG]         next_request: [" << next_request->first << "] request_id: " << -next_request->second << " is_done: " << request[-next_request->second].is_done << std::endl;
             //jump to next request
             int pass_cost = calculate_move_cost(disk_head[i].pos, next_request->first);
             if (remain_token < std::min(G, pass_cost)) break;
@@ -379,9 +380,19 @@ void read_action()
             while (true) {
                 int move_cost = (disk_head[i].last_action != 2) ? 64 : 
                     std::max(16, (int)ceil(disk_head[i].last_token * 0.8));
-                if (cnt == object[request[next_request->second].object_id].size) {
-                    finished_request.push_back(next_request->second);
-                    request[next_request->second].is_done = true;
+                int cur_object_id = request[-next_request->second].object_id;
+                // std::cerr << "[DEBUG]         read current_pos: [" << disk_head[i].pos << "](" << disk[i][disk_head[i].pos] << ") move_cost: " << move_cost << " remain_token: " << remain_token << std::endl;
+                if (cnt == object[cur_object_id].size) {
+                    // finished_request.push_back(-next_request->second);
+                    request[-next_request->second].is_done = true;
+                    // std::cerr << "[DEBUG]         finished_request: " << -next_request->second << std::endl;
+                    while (!object[cur_object_id].request_queue.empty()) {
+                        int req = object[cur_object_id].request_queue.front();
+                        if (req > -next_request->second) break;
+                        finished_request.push_back(req);
+                        object[cur_object_id].request_queue.pop();
+                        request[req].is_done = true;
+                    }
                     disk_head[i].token_queue.erase(next_request);
                     break;
                 }
@@ -391,24 +402,14 @@ void read_action()
                 }
                 cnt++;
                 movement[i] += "r";
-                std::cerr << "[DEBUG]         read current_pos: [" << disk_head[i].pos << "](" << disk[i][disk_head[i].pos] << ") move_cost: " << move_cost << " remain_token: " << remain_token << std::endl;
+                // std::cerr << "[DEBUG]         read current_pos: [" << disk_head[i].pos << "](" << disk[i][disk_head[i].pos] << ") move_cost: " << move_cost << " remain_token: " << remain_token << std::endl;
                 disk_head[i].pos = (disk_head[i].pos % V) + 1;
                 disk_head[i].last_action = 2;
                 disk_head[i].last_token = move_cost;
                 remain_token -= move_cost;
             }
         }
-    }
-
-    std::vector<int> final_finished_request;
-    for (auto request_id : finished_request) {
-        int object_id = request[request_id].object_id;
-        while (!object[object_id].request_queue.empty()) {
-            int req = object[object_id].request_queue.front();
-            if (req > request_id) break;
-            final_finished_request.push_back(req);
-            object[object_id].request_queue.pop();
-        }
+        std::cerr << "[DEBUG] remain_token: " << remain_token << "/" << G << " (" << (double)remain_token/G*100 << "%)" << std::endl;
     }
 
     // std::cerr << "[DEBUG] movement: " << std::endl;
@@ -419,12 +420,12 @@ void read_action()
     }
     
 
-    int size = final_finished_request.size();
+    int size = finished_request.size();
     printf("%d\n", size);
     // std::cerr << "[DEBUG] finished_request: " << std::endl;
     for (int i = 0; i < size; i++) {
-        printf("%d\n", final_finished_request[i]);
-        // std::cerr << "[DEBUG]         finished_request[" << i << "]: " << final_finished_request[i] << std::endl;
+        printf("%d\n", finished_request[i]);
+        // std::cerr << "[DEBUG]         finished_request[" << i << "]: " << finished_request[i] << std::endl;
     }
 
     fflush(stdout);
