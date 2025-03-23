@@ -53,3 +53,5 @@ settings.py.example
 .ipynb_checkpoints/
 
 *.exe
+*.zip
+main
