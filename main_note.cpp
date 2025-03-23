@@ -44,9 +44,6 @@ typedef struct Object_ {
 
     std::deque<int> active_phases; // 活动阶段队列
     int current_phase; // 当前阶段
-    bool is_request;
-    int disk_id;
-    int process_request; // 当前正在处理的请求
 } Object;
 
 // 磁头状态结构
@@ -54,8 +51,6 @@ typedef struct DiskHead_ {
     int pos; // 当前磁头位置（存储单元编号）
     int last_action; // 上一次动作类型：0-Jump, 1-Pass, 2-Read
     int last_token; // 上一次消耗的令牌数在cost中的下标
-
-    int current_object; // 当前请求
 } DiskHead;
 
 // 全局变量
@@ -231,23 +226,12 @@ int calculate_max_contiguous(int disk_id) {
     return max_len;
 }
 
-int calculate_max_space(int disk_id) {
-    int max_space = 0;
-    for (int i = 1; i <= V; i++) {
-        if (disk_obj_id[disk_id][i] == 0) {
-            max_space++;
-        }
-    }
-    return max_space;
-}
-
 // 选择三个不同磁盘（优先选择连续空间大的）
 std::vector<int> select_disks_for_object(int id) {
     std::vector<std::pair<int, int> > disk_scores;
     // 遍历所有磁盘，计算得分（连续空间 >= size的磁盘才有资格）
     for (int i = 1; i <= N; i++) {
         int contiguous = calculate_max_contiguous(i);
-        int max_space = calculate_max_space(i);
         // std::cerr << "[DEBUG] disk_id: " << i << " contiguous: " << contiguous << " max_space: " << max_space << " tag_num: " << disk_tag_num[i][object[id].tag] << std::endl;
         if (contiguous >= object[id].size) {
             disk_scores.emplace_back(contiguous, i);
@@ -340,8 +324,6 @@ void write_action()
         object[id].last_request_point = 0; // 初始化对象的最后请求指针
         object[id].size = size; // 设置对象的大小
         object[id].is_delete = false; // 标记对象为未删除
-        object[id].disk_id = -1;
-        object[id].is_request = false;
         object[id].cnt_request = 0;
         object[id].last_finish_time = -1;
         std::vector<int> selected_disks = select_disks_for_object(id);
@@ -414,24 +396,6 @@ int evaluate_replica(int rep_id, const Object* obj, int current_time) {
     int time_score = 0;
     
     return compactness*1 + move_cost*1 + time_score*1; // 返回总评分
-}
-
-// 选择最佳副本
-int select_best_replica(int object_id) {
-    const Object* obj = &object[object_id]; // 获取对象
-    int best_rep = -1; // 最佳副本索引
-    int max_score = -1; // 最大评分
-    
-    for(int rep=1; rep<=REP_NUM; rep++){
-        int score = evaluate_replica(rep, obj, 0); // 评估副本
-        if(score > max_score){ // 如果评分更高
-            max_score = score; // 更新最大评分
-            best_rep = rep; // 更新最佳副本
-        }
-        // std::cerr << "[DEBUG] " << " rep: " << rep << " score: " << score << std::endl; // 调试输出
-    }
-    // std::cerr << "[DEBUG] " << " best_rep: " << best_rep << std::endl; // 调试输出最佳副本
-    return best_rep; // 返回最佳副本
 }
 
 int select_best_replica_available(int object_id, bool* available_disks) {
@@ -523,24 +487,6 @@ void do_object_read(int object_id, int target_disk, std::string &head_movement){
         }
     }
 }
-void reset_disk_head(int disk_id)//重置磁头，等待下一个任务
-{
-    disk_head[disk_id].current_object = -1; // 重置磁头当前请求
-}
-bool check_disk_head(int disk_id)//检查当前盘是否空闲
-{
-    if(disk_head[disk_id].current_object == -1)
-    {
-        return true;
-    }
-    return false;
-}
-
-int evaluate_request(int object_id) {
-    return timestamp * 105 + object[object_id].active_phases.size() * object[object_id].size;
-}
-
-
 
 /**
  *  决策disk_id这块硬盘是否需要进行jump，以及决策首地址。
@@ -819,7 +765,6 @@ void read_action()
 
         object[object_id].last_request_point = request[request_id].time;
         object[object_id].active_phases.push_back(request_id);
-        object[object_id].is_request = true;
         object[object_id].cnt_request++;
     }
     update_disk_cnt(object_id_set); //增加请求数量后需要更新磁盘上的set
@@ -898,7 +843,6 @@ int main()
 
     for (int i = 1; i <= N; i++) {
         disk_point[i] = 1; // 初始化每个硬盘的磁头初始位置
-        reset_disk_head(i); // 重置磁头
     }
 
     // 主循环，处理时间片
