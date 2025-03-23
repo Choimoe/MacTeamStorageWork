@@ -231,9 +231,10 @@ std::vector<int> select_disks_for_object(int id) {
     // 遍历所有磁盘，计算得分（连续空间 >= size的磁盘才有资格）
     for (int i = 1; i <= N; i++) {
         int contiguous = calculate_max_contiguous(i);
-        // std::cerr << "[DEBUG] disk_id: " << i << " contiguous: " << contiguous << " max_space: " << max_space << " tag_num: " << disk_tag_num[i][object[id].tag] << std::endl;
+        std::cerr << "[DEBUG] disk_id: " << i << " contiguous: " << contiguous << " tag_num: " << disk_tag_num[i][object[id].tag] << std::endl;
         if (contiguous >= object[id].size) {
-            disk_scores.emplace_back(contiguous, i);
+            int tag_score = disk_tag_num[i][object[id].tag] * 10;
+            disk_scores.push_back(std::make_pair(tag_score + contiguous, i));
             // std::cerr << "[DEBUG] disk_id: " << i << " score: " << disk_tag_num[i][object[id].tag] << std::endl;
         }
     }
