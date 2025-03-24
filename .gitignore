@@ -55,3 +55,8 @@ settings.py.example
 *.exe
 *.zip
 main
+result.txt
+replay/
+log.txt
+build.sh
+cmake-build-debug/
