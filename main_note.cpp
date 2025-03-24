@@ -764,7 +764,7 @@ void preprocess_tag() {
         for (int i = 1; i <= REP_NUM; i++) {
             hot_tag_alloc[tag].disk[i] = disk_id;
             hot_tag_alloc[tag].start[i] = start_point[disk_id];
-            start_point[disk_id] = (start_point[disk_id] + fre_write[tag][0] - fre_del[tag][0] + V - 1) % V + 1;
+            start_point[disk_id] = (start_point[disk_id] + (int)((fre_write[tag][0] - fre_del[tag][0]) * 1.1) + V - 1) % V + 1;
             disk_id = disk_id % N + 1;
         }
     }
