@@ -70,6 +70,9 @@ int fre_write[MAX_TAG_NUM][TAG_PHASE]; // 每个标签的每个阶段写入的�
 int fre_read[MAX_TAG_NUM][TAG_PHASE]; // 每个标签的每个阶段读取的对象大小
 
 int disk_tag_num[MAX_DISK_NUM][MAX_TAG_NUM]; // 当前磁盘的标签个数
+int disk_distribute[MAX_DISK_NUM][MAX_TAG_NUM]; // 当前磁盘标签分布
+int disk_tag_distinct_number[MAX_DISK_NUM]; // 当前磁盘标签数量
+
 std::set<std::pair<int, int > > disk_set[MAX_DISK_SIZE]; //存储磁盘每个位置的对象块对应的对象仍有多少查询未完成，只保留第二维非0的元素。
 const int cost[] = {0, 64, 52, 42, 34, 28, 23, 19, 16};
 
@@ -397,10 +400,32 @@ std::pair<int, int> jump_decision(int disk_id) {
     int head = disk_head[disk_id].pos;
     auto ptr = disk_set[disk_id].lower_bound(std::make_pair(head, 0));
 
+    int time_slide_num = (timestamp - 1) / 1800 + 1;
+    int max_tag_freq = -1, max_tag_id = 0, rep = -1;
+    int tag_num = disk_tag_distinct_number[disk_id];
+    // TODO: 预处理
+    for (int i = 1; i <= tag_num; i++) {
+        int tag_id = disk_distribute[disk_id][i];
+        if (fre_read[tag_id][time_slide_num] > max_tag_freq) {
+            max_tag_freq = fre_read[tag_id][time_slide_num];
+            max_tag_id = tag_id;
+            for (int j = 1; j <= REP_NUM; j++) {
+                if (hot_tag_alloc[tag_id].disk[j] == disk_id) {
+                    rep = j;
+                    break;
+                }
+            }
+        }
+    }
+
     if (ptr == disk_set[disk_id].end()) {
         ptr = disk_set[disk_id].lower_bound(std::make_pair(1, 0));
         if (ptr == disk_set[disk_id].end()) {
-            return std::make_pair(0, head); // 这个磁头不进行任何操作
+            if(rep != -1) {
+                return std::make_pair(1, hot_tag_alloc[max_tag_id].start[rep]); // 跳到访问最密集的tag区域的开始
+            } else {
+                return std::make_pair(1, head); // 这个磁头不进行任何操作
+            }
         }
 
         int dist = get_distance(head, ptr->first);
@@ -790,25 +815,28 @@ void preprocess_tag() {
         }
     }
 
-    std::vector<std::vector<std::pair<int, int> > > disk_distribute(N + 1, std::vector<std::pair<int, int> >());
+    std::vector<std::vector<std::pair<int, int> > > disk_distribute_vector(N + 1, std::vector<std::pair<int, int> >());
 
     for (auto i : tag_id) {
-        std::cerr << "[DEBUG] tag: " << i << " is_hot: " << hot_tag_alloc[i].is_hot << std::endl;
+//        std::cerr << "[DEBUG] tag: " << i << " is_hot: " << hot_tag_alloc[i].is_hot << std::endl;
         for (int j = 1; j <= REP_NUM; j++) {
-            std::cerr << "[DEBUG]      disk: " << hot_tag_alloc[i].disk[j] << " start: " << hot_tag_alloc[i].start[j] << std::endl;
-            disk_distribute[hot_tag_alloc[i].disk[j]].emplace_back(hot_tag_alloc[i].start[j], i);
+//            std::cerr << "[DEBUG]      disk: " << hot_tag_alloc[i].disk[j] << " start: " << hot_tag_alloc[i].start[j] << std::endl;
+            disk_distribute_vector[hot_tag_alloc[i].disk[j]].emplace_back(hot_tag_alloc[i].start[j], i);
         }
     }
 
     std::cerr << "[DEBUG] N = " << N << ", V = " << V << std::endl;
 
-    for (int i = 1; i <= N; i++) std::sort(disk_distribute[i].begin(), disk_distribute[i].end());
+    for (int i = 1; i <= N; i++) std::sort(disk_distribute_vector[i].begin(), disk_distribute_vector[i].end());
 
     for (int i = 1; i <= N; i++) {
         std::cerr << "[DEBUG] disk: " << i << ":" << std::endl;
-        for (auto [fi, se]: disk_distribute[i]) {
+        int cnt = 0;
+        for (auto [fi, se]: disk_distribute_vector[i]) {
+            disk_distribute[i][++cnt] = se;
             std::cerr << "[DEBUG]      start: " << fi << "(" << se << ")" << std::endl;
         }
+        disk_tag_distinct_number[i] = cnt;
     }
 }
 
