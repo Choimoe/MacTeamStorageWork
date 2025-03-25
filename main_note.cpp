@@ -31,12 +31,14 @@ const int cost[] = {0,  64, 52, 42, 34,
  * @param prev_id 前一个请求 ID
  * @param is_done 请求是否完成
  * @param time 请求时间
+ * @param is_deleted 请求是否被删除
  */
 typedef struct Request_ {
     int object_id;
     int prev_id;
     bool is_done;
     int time;
+    int is_deleted;
 } Request;
 
 /**
@@ -61,6 +63,7 @@ typedef struct Object_ {
     int last_finish_time{};
 
     std::deque<int> active_phases;
+    std::queue<int> timeout_request;
 } Object;
 
 /**
@@ -119,6 +122,8 @@ typedef struct HotTagAlloc_ {
 } HotTagAlloc;
 
 HotTagAlloc hot_tag_alloc[MAX_TAG_NUM];
+
+std::queue<int> active_request[MAX_OBJECT_SIZE];
 
 /**
  * 计算从x走到y需要的时间
@@ -246,6 +251,7 @@ void delete_action() {
     for (int i = 1; i <= n_delete; i++) {
         int id = _id[i];
         abort_num += object[id].cnt_request;
+        abort_num += object[id].timeout_request.size();
     }
 
     std::set<int> object_id_set;
@@ -256,6 +262,14 @@ void delete_action() {
 
         if (!object[id].active_phases.empty()) {
             object_id_set.insert(id);
+        }
+
+        while (!object[id].timeout_request.empty()) {
+            int request_id = object[id].timeout_request.front();
+            object[id].timeout_request.pop();
+            if (!request[request_id].is_done) {
+                printf("%d\n", request_id);
+            }
         }
 
         while (!object[id].active_phases.empty()) {
@@ -845,9 +859,24 @@ void set_request_info(int request_id, int object_id) {
     object[object_id].last_request_point = request[request_id].time;
     object[object_id].active_phases.push_back(request_id);
     object[object_id].cnt_request++;
+    active_request[object[object_id].size].push(request_id);
 }
 
 void clean_timeout_request() {
+    for (int i = 1; i < MAX_OBJECT_SIZE; i++) {
+        while (!active_request[i].empty() && calculate_request_score(active_request[i].front()) < 0.1) {
+            int request_id = active_request[i].front();
+            request[request_id].is_deleted = true;
+            auto &deque = object[request[request_id].object_id].active_phases;
+            auto it = std::find(deque.begin(), deque.end(), request_id);
+            if (it != deque.end()) {
+                deque.erase(it);
+                object[request[request_id].object_id].cnt_request--;
+                object[request[request_id].object_id].timeout_request.push(request_id);
+            }
+            active_request[i].pop();
+        }
+    }
 }
 
 /**
