@@ -147,6 +147,38 @@ void timestamp_action() {
 }
 
 /**
+ * 计算请求的时间得分 f(x)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_time_score(int request_id) {
+    double x = timestamp - request[request_id].time;
+    if (x <= 10) return 1 - 0.005 * x;
+    if (x <= 105) return 1.05 - 0.01 * x;
+    return 0;
+}
+
+/**
+ * 计算请求的大小得分 g(size)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_size_score(int request_id) {
+    int object_id = request[request_id].object_id;
+    int size = object[object_id].size;
+    return (size + 1) * 0.5;
+}
+
+/**
+ * 计算请求的得分 SCORES = f(x) * g(size)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_score(int request_id) {
+    return calculate_request_time_score(request_id) * calculate_request_size_score(request_id);
+}
+
+/**
  * 删除对象在disk_id这块磁盘上的数据（obj_id 与 block_id）。
  * @param object_unit 对象的存储单元下标
  * @param disk_id 磁盘编号
@@ -815,6 +847,9 @@ void set_request_info(int request_id, int object_id) {
     object[object_id].cnt_request++;
 }
 
+void clean_timeout_request() {
+}
+
 /**
  * 处理读入操作
  */
@@ -850,6 +885,8 @@ void read_action() {
     for (int i = 0; i < finished_request_size; i++) {
         printf("%d\n", finished_request[i]);
     }
+
+    clean_timeout_request();
 
     fflush(stdout);
 }
@@ -909,12 +946,35 @@ void preprocess_tag() {
     for (int i = 0; i < N / REP_NUM; i++) {
         hot_tag.push_back(tag_id[i]);
         hot_tag_alloc[tag_id[i]].is_hot = 1;
+        tag_id.erase(tag_id.begin() + i);
     }
+
+    std::sort(tag_id.begin(), tag_id.end(), [](int a, int b) {
+        return fre_write[a][0] - fre_del[a][0] > fre_write[b][0] - fre_del[b][0];
+    });
 
     std::vector<int> start_point(N + 1);
     for (int i = 1; i <= N; i++) {
         start_point[i] = 1;
     }
+
+    /**
+     * 设置标签信息
+     * @param tag 标签编号
+     * @param disk_id 磁盘编号
+     * @param rep_id 副本编号
+     * @param size 标签大小
+     */
+    auto set_tag_info = [&](int tag, int disk_id, int rep_id, int size) {
+        hot_tag_alloc[tag].disk[rep_id] = disk_id;
+        hot_tag_alloc[tag].start[rep_id] = start_point[disk_id];
+        tag_alloc_length[tag] = size;
+        di[disk_id].distribute_length[tag] = size;
+        start_point[disk_id] = (start_point[disk_id] + size + V - 1) % V + 1;
+        for (int i = 0; i < size; i++) {
+            di[disk_id].disk_belong_tag[(start_point[disk_id] + i - 1) % V + 1] = tag;
+        }
+    };
 
     int disk_id = 1;
     for (auto tag : hot_tag) {
