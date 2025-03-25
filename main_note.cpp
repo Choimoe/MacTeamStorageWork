@@ -81,6 +81,8 @@ typedef struct DiskHead_ {
 // 全局变量
 Request request[MAX_REQUEST_NUM]; // 请求数组
 Object object[MAX_OBJECT_NUM];    // 对象数组
+int total_request_num = 0;
+int total_object_num = 0;
 
 int T, M, N, V, G; // 时间片、对象标签、硬盘数量、存储单元、令牌数量
 int disk_obj_id[MAX_DISK_NUM][MAX_DISK_SIZE];   // 磁盘上存储的obj的id
@@ -219,6 +221,32 @@ void update_disk_cnt(const std::set<int> &object_id_set) {
                 if (object[object_id].cnt_request > 0) // 增加新的
                     di[disk_id].required.insert(
                         std::make_pair(index, object[object_id].cnt_request));
+            }
+        }
+    }
+}
+
+/**
+ * 更新object_id_set中所有对象的磁盘set，需要支持cnt_request增加、减小。
+ * @param object_id_set 记录需要修改的object的id的集合（使用set自动去重）
+ */
+void reset_disk_cnt(const std::set<int> &object_id_set) {
+    for (int object_id : object_id_set) {
+        for (int rep = 1; rep <= REP_NUM; rep++) {
+            int disk_id = object[object_id].replica[rep];
+            for (int i = 1; i <= object[object_id].size; i++) {
+                int index = object[object_id].unit[rep][i];
+                auto p =
+                    di[disk_id].required.lower_bound(std::make_pair(index, 0));
+
+                if (p != di[disk_id].required.end() &&
+                    p->first == index) { // 删除原来的
+                    di[disk_id].required.erase(p);
+                }
+
+                // if (object[object_id].cnt_request > 0) // 增加新的
+                //     di[disk_id].required.insert(
+                //         std::make_pair(index, object[object_id].cnt_request));
             }
         }
     }
@@ -441,9 +469,15 @@ std::vector<int> allocate_contiguous_blocks(int disk_id, int size,
         return true;
     };
 
-    if (rep_id != 0) {
-        for (int i = 0; i < tag_alloc_length[tag]; i++) {
-            int pos = (start + i) % V;
+    /**
+     * @brief 在磁盘disk_id上搜索length个连续的空闲块
+     * @param start 起始位置
+     * @param length 长度
+     * @return 返回分配的存储单元编号列表
+     */
+    auto search_block = [&](int start, int length, int step=1) -> std::vector<int> {
+        for (int i = 0; i < length; i++) {
+            int pos = (start + i * step + V) % V;
             if (pos == 0)
                 pos = V;
             if (disk_obj_id[disk_id][pos] == 0) {
@@ -452,36 +486,27 @@ std::vector<int> allocate_contiguous_blocks(int disk_id, int size,
                 }
             }
         }
+        return {};
+    };
+
+    if (rep_id != 0) {
+        auto blocks = search_block(start, tag_alloc_length[tag]);
+        if (!blocks.empty()) {
+            return blocks;
+        }
     }
 
-    if (tag !=
-        di[disk_id].subhot_read_tag[(timestamp - 1) / FRE_PER_SLICING + 1]) {
+    if (tag == di[disk_id].subhot_read_tag[(timestamp - 1) / FRE_PER_SLICING + 1]) {
         start = di[disk_id].end_point;
-        for (int i = 0; i < tag_alloc_length[tag]; i++) {
-            int pos = (start + i) % V;
-            if (pos == 0)
-                pos = V;
-            if (disk_obj_id[disk_id][pos] == 0) {
-                if (check_valid(pos)) {
-                    return save_block(pos);
-                }
-            }
+        auto blocks = search_block(start, tag_alloc_length[tag]);
+        if (!blocks.empty()) {
+            return blocks;
         }
     }
 
     start = V - size + 1;
 
-    for (int i = 0; i < V; i++) {
-        int pos = (start - i + V) % V;
-        if (pos == 0)
-            pos = V;
-        if (disk_obj_id[disk_id][pos] == 0) {
-            if (check_valid(pos)) {
-                return save_block(pos);
-            }
-        }
-    }
-    return {}; // 空间不足
+    return search_block(start, V, -1);
 }
 
 /**
@@ -524,6 +549,7 @@ void write_action() {
         object[id].is_delete = false;      // 标记对象为未删除
         object[id].cnt_request = 0;
         object[id].last_finish_time = -1;
+        total_object_num++;
         std::vector<int> selected_disks = select_disks_for_object(id);
         for (int j = 1; j <= REP_NUM; j++) {
             int disk_id = selected_disks[j - 1];
@@ -558,6 +584,25 @@ void write_action() {
     fflush(stdout); // 刷新输出缓冲区
 }
 
+std::pair<int, int> find_max_cnt_request_object(int disk_id) {
+        //遍历所有object, 找出当前磁盘上，cnt_request最大的object
+    int max_cnt_request = 0;
+    int max_cnt_request_object = 0;
+    int max_cnt_request_rep = 0;
+    for (int obj_id = 1; obj_id <= total_object_num; obj_id++) {
+        for (int rep_id = 1; rep_id <= REP_NUM; rep_id++) {
+            if (object[obj_id].replica[rep_id] == disk_id) {
+                if (object[obj_id].cnt_request > max_cnt_request) {
+                    max_cnt_request = object[obj_id].cnt_request;
+                    max_cnt_request_object = obj_id;
+                    max_cnt_request_rep = rep_id;
+                }
+            }
+        }
+    }
+    return std::make_pair(max_cnt_request_object, max_cnt_request_rep);
+}
+
 /**
  *  决策disk_id这块硬盘是否需要进行jump，以及决策首地址。
  * @param disk_id 磁盘编号
@@ -584,6 +629,11 @@ std::pair<int, int> jump_decision(int disk_id) {
 
     if (ptr == di[disk_id].required.end()) {
         ptr = di[disk_id].required.lower_bound(std::make_pair(1, 0));
+        auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
+        if (max_cnt_request_object.first != 0) {
+            return std::make_pair(
+                1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1]);
+        }
         if (ptr == di[disk_id].required.end()) {
             if (rep != -1) {
                 return std::make_pair(
@@ -606,6 +656,11 @@ std::pair<int, int> jump_decision(int disk_id) {
 
     int dist = get_distance(head, ptr->first);
     if (dist >= G) {
+        auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
+        if (max_cnt_request_object.first != 0) {
+            return std::make_pair(
+                1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1]);
+        }
         return std::make_pair(1, ptr->first); // 如果距离大于等于G，那么只能jump
     } else {
         return std::make_pair(0, ptr->first); // 反之使用pass即可。
@@ -764,14 +819,20 @@ void judge_request_on_objects(const std::set<int> &set,
  * @param finished_request 记录已经完成的请求
  * @return 该磁盘在该时间片的操作序列（string）
  */
-void solve_disk(int disk_id, std::string &actions,
+std::set<int> solve_disk(int disk_id, std::string &actions,
                 std::vector<int> &finished_request) {
     auto p = jump_decision(disk_id); // 决策初始位置，以及是否不得不使用jump
-
+    // if(p.first == 1) {
+    //     auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
+    //     if (max_cnt_request_object.first != 0) {
+    //         p.second = object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1];
+    //     }
+    // }
     int distance = get_distance(disk_head[disk_id].pos, p.second);
     disk_head[disk_id].pos = p.second; // 更新磁盘头的位置
 
     std::set<int> obj_indices;
+    std::set<int> changed_objects;
 
     if (p.first == -1) { // 无操作
         actions = "#\n";
@@ -840,9 +901,11 @@ void solve_disk(int disk_id, std::string &actions,
         judge_request_on_objects(
             obj_indices, finished_request,
             changed_objects); // 处理被修改过的对象上潜在的请求
+        // reset_disk_cnt(changed_objects);
         update_disk_cnt(
             changed_objects); // 修改request被完成对象的计数，并更新其set
     }
+    return changed_objects;
 }
 
 /**
@@ -898,10 +961,13 @@ void read_action() {
 
     std::string head_movement[N + 1]; // 存储磁头移动记录
     std::vector<int> finished_request;
-
+    std::set<int> changed_objects;
     for (int i = 1; i <= N; i++) {
-        solve_disk(i, head_movement[i], finished_request);
+        std::set<int> t = solve_disk(i, head_movement[i], finished_request);
+        changed_objects.insert(t.begin(), t.end());
     }
+    
+    update_disk_cnt(changed_objects);
 
     for (int i = 1; i <= N; i++) {
         printf("%s", head_movement[i].c_str());
@@ -1030,7 +1096,7 @@ void preprocess_tag() {
 
     for (auto i : tag_id) {
         if (!hot_tag_alloc[i].is_hot) {
-            int size = fre_write[i][0] - fre_del[i][0];
+            int size = fre_write[i][0] - fre_del[i][0] + MAX_OBJECT_SIZE;
             tag_alloc_length[i] = size;
             std::vector<std::pair<int, int>> selected_disk(REP_NUM + 1);
             for (int j = 1; j <= REP_NUM; j++) {
@@ -1118,7 +1184,9 @@ void preprocess_tag() {
  * 基于这个思路实现https://rocky-robin-46d.notion.site/1bb3b75a16b7803d8457c86b01881322?pvs=4
  */
 int main() {
+    freopen("sample_practice.in", "r", stdin);
     freopen("log.txt", "w", stderr); // 将调试输出重定向到 log.txt
+    freopen("/dev/null", "w", stdout);
 
     scanf("%d%d%d%d%d", &T, &M, &N, &V, &G); // 读取参数
     for (int i = 1; i <= N; i++) {           // 初始化磁头位置和当前阶段
@@ -1143,3 +1211,8 @@ int main() {
 
     return 0; // 返回 0，表示程序正常结束
 }
+// Origin: 7153134.9875
+// 仅仅使用1-2: 7178710.6450: 24760606.92
+// 仅仅使用2-3: 7044253.9875: 25552872.98
+// 仅仅私用1-3: 7246190.0550:
+// object-based: 7176277.4525
