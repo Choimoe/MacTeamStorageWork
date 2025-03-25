@@ -83,6 +83,8 @@ int disk_belong_tag[MAX_DISK_NUM][MAX_DISK_SIZE]; // 当前磁盘每个位置属
 std::set<std::pair<int, int > > disk_set[MAX_DISK_SIZE]; //存储磁盘每个位置的对象块对应的对象仍有多少查询未完成，只保留第二维非0的元素。
 const int cost[] = {0, 64, 52, 42, 34, 28, 23, 19, 16};
 
+std::queue<int> active_request[MAX_OBJECT_SIZE]; // 存储每个对象大小的请求队列
+
 typedef struct HotTagAlloc_ {
     int disk[REP_NUM + 1];
     int start[REP_NUM + 1];
@@ -116,6 +118,38 @@ void timestamp_action()
     printf("TIMESTAMP %d\n", cur_time); // 输出时间戳
     timestamp = cur_time; // 更新全局时间戳
     fflush(stdout); // 刷新输出缓冲区
+}
+
+/**
+ * 计算请求的时间得分 f(x)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_time_score(int request_id) {
+    double x = timestamp - request[request_id].time;
+    if (x <= 10) return 1 - 0.005 * x;
+    if (x <= 105) return 1.05 - 0.01 * x;
+    return 0;
+}
+
+/**
+ * 计算请求的大小得分 g(size)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_size_score(int request_id) {
+    int object_id = request[request_id].object_id;
+    int size = object[object_id].size;
+    return (size + 1) * 0.5;
+}
+
+/**
+ * 计算请求的得分 SCORES = f(x) * g(size)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_score(int request_id) {
+    return calculate_request_time_score(request_id) * calculate_request_size_score(request_id);
 }
 
 /**
@@ -744,6 +778,11 @@ void set_request_info(int request_id, int object_id) {
     object[object_id].last_request_point = request[request_id].time;
     object[object_id].active_phases.push_back(request_id);
     object[object_id].cnt_request++;
+
+    active_request[object[object_id].size].push(request_id);
+}
+
+void clean_timeout_request() {
 }
 
 /**
@@ -783,6 +822,8 @@ void read_action()
     for (int i = 0; i < finished_request_size; i++) {
         printf("%d\n", finished_request[i]);
     }
+
+    clean_timeout_request();
 
     fflush(stdout);
 }
@@ -842,25 +883,40 @@ void preprocess_tag() {
     for (int i = 0; i < N / REP_NUM; i++) {
         hot_tag.push_back(tag_id[i]);
         hot_tag_alloc[tag_id[i]].is_hot = 1;
+        tag_id.erase(tag_id.begin() + i);
     }
+
+    std::sort(tag_id.begin(), tag_id.end(), [](int a, int b) {
+        return fre_write[a][0] - fre_del[a][0] > fre_write[b][0] - fre_del[b][0];
+    });
 
     std::vector<int> start_point(N + 1);
     for (int i = 1; i <= N; i++) {
         start_point[i] = 1;
     }
 
+    /**
+     * 设置标签信息
+     * @param tag 标签编号
+     * @param disk_id 磁盘编号
+     * @param rep_id 副本编号
+     * @param size 标签大小
+     */
+    auto set_tag_info = [&](int tag, int disk_id, int rep_id, int size) {
+        hot_tag_alloc[tag].disk[rep_id] = disk_id;
+        hot_tag_alloc[tag].start[rep_id] = start_point[disk_id];
+        tag_alloc_length[tag] = size;
+        disk_distribute_length[disk_id][tag] = size;
+        start_point[disk_id] = (start_point[disk_id] + size + V - 1) % V + 1;
+        for (int i = 0; i < size; i++) {
+            disk_belong_tag[disk_id][(start_point[disk_id] + i - 1) % V + 1] = tag;
+        }
+    };
+
     int disk_id = 1;
     for (auto tag : hot_tag) {
         for (int i = 1; i <= REP_NUM; i++) {
-            int size = fre_write[tag][0] - fre_del[tag][0];
-            hot_tag_alloc[tag].disk[i] = disk_id;
-            hot_tag_alloc[tag].start[i] = start_point[disk_id];
-            tag_alloc_length[tag] = (int)(size * 1.1);
-            disk_distribute_length[disk_id][tag] = tag_alloc_length[tag];
-            start_point[disk_id] = (start_point[disk_id] + tag_alloc_length[tag] + V - 1) % V + 1;
-            for (int j = 0; j < tag_alloc_length[tag]; j++) {
-                disk_belong_tag[disk_id][(start_point[disk_id] + j - 1) % V + 1] = tag;
-            }
+            set_tag_info(tag, disk_id, i, (fre_write[tag][0] - fre_del[tag][0]) * 1.1);
             disk_id = disk_id % N + 1;
         }
     }
@@ -869,27 +925,17 @@ void preprocess_tag() {
     for (int i = 1; i <= N; i++)
         current_space.emplace(V - start_point[i] + 1, i);
 
-    for (auto i : tag_id) {
-        if (!hot_tag_alloc[i].is_hot) {
-            int size = fre_write[i][0] - fre_del[i][0];
-            tag_alloc_length[i] = size;
-            std::vector<std::pair<int, int> > selected_disk(REP_NUM + 1);
-            for (int j = 1; j <= REP_NUM; j++) {
-                auto it = current_space.top();
-                selected_disk[j] = std::make_pair(it.first, it.second);
-                current_space.pop();
-            }
-            for (int j = 1; j <= REP_NUM; j++) {
-                int cur_disk_id = selected_disk[j].second;
-                current_space.emplace(selected_disk[j].first - size, cur_disk_id);
-                hot_tag_alloc[i].disk[j] = cur_disk_id;
-                hot_tag_alloc[i].start[j] = start_point[cur_disk_id];
-                disk_distribute_length[cur_disk_id][i] = size;
-                start_point[cur_disk_id] = (start_point[cur_disk_id] + size + V - 1) % V + 1;
-                for (int k = 0; k < size; k++) {
-                    disk_belong_tag[cur_disk_id][(start_point[cur_disk_id] + k - 1) % V + 1] = i;
-                }
-            }
+    for (auto i : tag_id) { 
+        int size = fre_write[i][0] - fre_del[i][0];
+        std::vector<std::pair<int, int> > selected_disk(REP_NUM + 1);
+        for (int j = 1; j <= REP_NUM; j++) {
+            auto it = current_space.top();
+            selected_disk[j] = std::make_pair(it.first, it.second);
+            current_space.pop();
+        }
+        for (int j = 1; j <= REP_NUM; j++) {
+            current_space.emplace(selected_disk[j].first - size, selected_disk[j].second);
+            set_tag_info(i, selected_disk[j].second, j, size);
         }
     }
 
