@@ -28,6 +28,7 @@ typedef struct Request_ {
     int prev_id;   // 前一个请求 ID
     bool is_done;  // 请求是否完成
     int time;      // 请求时间
+    bool is_delete; // 请求是否被删除
 } Request;
 
 // 对象结构体
@@ -42,6 +43,7 @@ typedef struct Object_ {
     int last_finish_time{};     // 最近一次请求完成时间
 
     std::deque<int> active_phases; // 活动阶段队列
+    std::queue<int> timeout_request; // 超时请求
 } Object;
 
 // 磁头状态结构
@@ -85,6 +87,8 @@ int disk_end_point[MAX_DISK_NUM];      // 当前磁盘的结束位置
 int disk_belong_tag[MAX_DISK_NUM]
                    [MAX_DISK_SIZE]; // 当前磁盘每个位置属于哪个标签
 
+std::queue<int> active_request[MAX_OBJECT_SIZE];
+
 std::set<std::pair<int, int>> disk_set
     [MAX_DISK_SIZE]; // 存储磁盘每个位置的对象块对应的对象仍有多少查询未完成，只保留第二维非0的元素。
 const int cost[] = {0, 64, 52, 42, 34, 28, 23, 19, 16};
@@ -121,6 +125,38 @@ void timestamp_action() {
     printf("TIMESTAMP %d\n", cur_time); // 输出时间戳
     timestamp = cur_time;               // 更新全局时间戳
     fflush(stdout);                     // 刷新输出缓冲区
+}
+
+/**
+ * 计算请求的时间得分 f(x)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_time_score(int request_id) {
+    double x = timestamp - request[request_id].time;
+    if (x <= 10) return 1 - 0.005 * x;
+    if (x <= 105) return 1.05 - 0.01 * x;
+    return 0;
+}
+
+/**
+ * 计算请求的大小得分 g(size)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_size_score(int request_id) {
+    int object_id = request[request_id].object_id;
+    int size = object[object_id].size;
+    return (size + 1) * 0.5;
+}
+
+/**
+ * 计算请求的得分 SCORES = f(x) * g(size)
+ * @param request_id 请求编号
+ * @return double 得分
+ */
+double calculate_request_score(int request_id) {
+    return calculate_request_time_score(request_id) * calculate_request_size_score(request_id);
 }
 
 /**
@@ -191,6 +227,7 @@ void delete_action() {
     for (int i = 1; i <= n_delete; i++) {
         int id = _id[i];
         abort_num += object[id].cnt_request;
+        abort_num += object[id].timeout_request.size();
     }
 
     std::set<int> object_id_set;
@@ -208,6 +245,14 @@ void delete_action() {
             object[id].active_phases.pop_front();
             if (!request[current_id].is_done) { // 这里应该总是可以删除的
                 printf("%d\n", current_id);     // 打印未完成请求的 ID
+            }
+        }
+        
+        while (!object[id].timeout_request.empty()) {
+            int request_id = object[id].timeout_request.front();
+            object[id].timeout_request.pop();
+            if (!request[request_id].is_done) {
+                printf("%d\n", request_id);
             }
         }
         // 删除对象的副本
@@ -446,6 +491,7 @@ void do_object_write(int *object_unit, int *disk_unit, int size,
 void write_action() {
     int n_write;           // 写请求数量
     scanf("%d", &n_write); // 读取写请求的数量
+    // std::cerr << "[DEBUG] " << "write_action: " << n_write << std::endl;
     for (int i = 1; i <= n_write; i++) {
         int id, size, tag;
         scanf("%d%d%d", &id, &size, &tag); // 读取对象 ID 和大小
@@ -457,6 +503,8 @@ void write_action() {
         object[id].is_delete = false;      // 标记对象为未删除
         object[id].cnt_request = 0;
         object[id].last_finish_time = -1;
+        // std::cerr << "[DEBUG] " << "write_action: " << id << " size: " << size
+        //           << " tag: " << tag << std::endl;
         std::vector<int> selected_disks = select_disks_for_object(id);
         for (int j = 1; j <= REP_NUM; j++) {
             int disk_id = selected_disks[j - 1];
@@ -469,15 +517,14 @@ void write_action() {
                 object[id].unit[j][_ + 1] = blocks[_];
             }
             disk_tag_num[disk_id][object[id].tag]++;
+            // std::cerr << "[DEBUG]     rep #" << j << " write on disk: " << disk_id
+            //           << std::endl;
             // do_object_write(object[id].unit[j], disk[object[id].replica[j]],
             // size, id); // 将对象数据写入磁盘
         }
-
         printf("%d\n", id); // 打印对象 ID
         for (int j = 1; j <= REP_NUM; j++) {
             printf("%d", object[id].replica[j]); // 打印副本 ID
-            // std::cerr << "[DEBUG] replica" <<j<< " in disk: " <<
-            // object[id].replica[j] << " ";
             for (int k = 1; k <= size; k++) {
                 printf(" %d", object[id].unit[j][k]); // 打印对象数据
                 // std::cerr << "block" << k << ":" << object[id].unit[j][k] <<
@@ -794,6 +841,25 @@ void set_request_info(int request_id, int object_id) {
     object[object_id].cnt_request++;
 }
 
+void clean_timeout_request() {
+    for (int i = 1; i < MAX_OBJECT_SIZE; i++) {
+        while (!active_request[i].empty()) {
+            int request_id = active_request[i].front();
+            int object_id = request[request_id].object_id;
+            int score = calculate_request_score(request_id) * object[object_id].cnt_request;
+            if (score > 0.1) break;
+            request[request_id].is_delete = true;
+            if (request[request_id].is_done) { active_request[i].pop(); continue; }
+            if (!object[object_id].active_phases.empty()) {
+                object[object_id].active_phases.pop_front();
+                object[object_id].cnt_request--;
+                object[object_id].timeout_request.push(request_id);
+            }
+            active_request[i].pop();
+        }
+    }
+}
+
 /**
  * 处理读入操作
  */
@@ -808,6 +874,7 @@ void read_action() {
         scanf("%d%d", &request_id, &object_id);
         set_request_info(request_id, object_id);
         object_id_set.insert(object_id);
+        active_request[object[object_id].size].push(request_id);
     }
     update_disk_cnt(object_id_set); // 增加请求数量后需要更新磁盘上的set
 
@@ -829,6 +896,8 @@ void read_action() {
     for (int i = 0; i < finished_request_size; i++) {
         printf("%d\n", finished_request[i]);
     }
+
+    clean_timeout_request();
 
     fflush(stdout);
 }
