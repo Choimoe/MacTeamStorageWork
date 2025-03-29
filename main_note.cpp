@@ -1093,8 +1093,7 @@ void preprocess_tag() {
     }
 
     std::sort(tag_id.begin(), tag_id.end(), [](int a, int b) {
-        return fre_write[a][0] * 0 + fre_read[a][0] * 1 + fre_del[a][0] * 0 >
-               fre_write[b][0] * 0 + fre_read[b][0] * 1 + fre_del[b][0] * 0;
+        return fre_read[a][0] > fre_read[b][0];
     });
 
     std::vector<int> hot_tag;
@@ -1105,6 +1104,10 @@ void preprocess_tag() {
         hot_tag.push_back(tag_id[i]);
         hot_tag_alloc[tag_id[i]].is_hot = 1;
     }
+
+    std::sort(tag_id.begin(), tag_id.end(), [](int a, int b) {
+        return fre_write[a][0] - fre_del[a][0] > fre_write[b][0] - fre_del[b][0];
+    });
 
     std::vector<int> start_point(N + 1), top(N + 1);
     std::vector<std::set<int> > alloced(N + 1);
