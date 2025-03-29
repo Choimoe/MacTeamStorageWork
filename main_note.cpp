@@ -648,7 +648,7 @@ std::pair<int, int> jump_decision(int disk_id) {
         //     return std::make_pair(
         //         1, ptr->first); // 如果距离大于等于G，那么只能jump
         // } else {
-        if (dist >= G*2/3)
+        if (dist >= G * 2 / 3)
         {
             auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
             if (max_cnt_request_object.first != 0) {
@@ -661,7 +661,7 @@ std::pair<int, int> jump_decision(int disk_id) {
     }
 
     int dist = get_distance(head, ptr->first);
-    if (dist >= G*2/3)
+    if (dist >= G * 2 / 3)
     {
         auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
         if (max_cnt_request_object.first != 0) {
@@ -772,23 +772,56 @@ std::string dp_plan(int disk_id, int tokens) {
                     cur_j = dp_path[cur_i][cur_j];
                     cur_i--;
                 }
-                if (!path.empty()) { // 更新磁头的最后一次操作和最后一次操作消耗的token
-                    if (path[0] == 0) {
+//                if (!path.empty()) { // 更新磁头的最后一次操作和最后一次操作消耗的token
+//                    if (path[0] == 0) {
+//                        disk_head[disk_id].last_action = 1;
+//                        disk_head[disk_id].last_token = 0;
+//                    } else {
+//                        disk_head[disk_id].last_action = 2;
+//                        disk_head[disk_id].last_token = path[0];
+//                    }
+//                }
+                std::reverse(path.begin(), path.end());
+                //删掉所有的后缀pass操作，也就是path中的0
+                while (!path.empty() && *path.rbegin() == 0) {
+                    path.pop_back();
+                }
+                int remain_tokens = tokens;
+                for (auto v : path) {
+                    if (v == 0) {
+                        result += "p";
+                        remain_tokens -= 1;
+                    }
+                    else {
+                        result += "r";
+                        remain_tokens -= cost[v];
+                    }
+                }
+                //更新磁头
+                if (!path.empty()) {
+                    if (*path.rbegin()) {
+                        disk_head[disk_id].last_action = 2;
+                        disk_head[disk_id].last_token = *path.rbegin();
+                    } else {
                         disk_head[disk_id].last_action = 1;
                         disk_head[disk_id].last_token = 0;
-                    } else {
-                        disk_head[disk_id].last_action = 2;
-                        disk_head[disk_id].last_token = path[0];
                     }
                 }
 
-                std::reverse(path.begin(), path.end());
-                for (auto v : path) {
-                    if (v == 0)
-                        result += "p";
-                    else
+                //尽可能read
+                do {
+                    int last_token = disk_head[disk_id].last_token;
+                    int c = cost[std::min(last_token + 1, 8)];
+                    //计算代价c
+                    if (c <= remain_tokens) {
                         result += "r";
-                }
+                        remain_tokens -= c;
+                        disk_head[disk_id].last_token = std::min(last_token + 1, 8);
+                        disk_head[disk_id].last_action = 2;
+                    } else {
+                        break;
+                    }
+                } while (true);
 
                 return result;
             }
@@ -844,7 +877,7 @@ std::set<int> solve_disk(int disk_id, std::string &actions,
     //     }
     // }
     int distance = get_distance(disk_head[disk_id].pos, p.second);
-    disk_head[disk_id].pos = p.second; // 更新磁盘头的位置
+//    disk_head[disk_id].pos = p.second; // 更新磁盘头的位置
 
     std::set<int> obj_indices;
     std::set<int> changed_objects;
@@ -852,27 +885,30 @@ std::set<int> solve_disk(int disk_id, std::string &actions,
     if (p.first == -1) { // 无操作
         actions = "#\n";
     } else if (p.first == 1) { // jump
+        disk_head[disk_id].pos = p.second; // 更新磁盘头的位置
         actions = "j " + std::to_string(p.second) + "\n";
         disk_head[disk_id].last_action = 0; // 使用jump
         disk_head[disk_id].last_token = 0;
     } else if (p.first == 0) { // pass
-        for (int i = 1; i <= distance; i++) {
-            actions += "p";
-        }
-        disk_head[disk_id].last_action = 1; // 使用pass
-        disk_head[disk_id].last_token = 0;
+        //UPDATE:现在去掉了开头的pass操作，整个都是用dp进行决策。
+//        for (int i = 1; i <= distance; i++) {
+//            actions += "p";
+//        }
+//        disk_head[disk_id].last_action = 1; // 使用pass
+//        disk_head[disk_id].last_token = 0;
 
-        auto s = dp_plan(
-            disk_id,
-            G - distance); // 使用dp计算最优操作序列，最优化目标位尽可能走得远
+        auto s = dp_plan(disk_id,G); // 使用dp计算最优操作序列，最优化目标位尽可能走得远
+
         actions += s;
         actions += "#\n";
         int i = disk_head[disk_id].pos;
         int len = (int)s.length();
         //        int end = s.length() + disk_head[disk_id].pos;
 
+        //更新object的访问时间
         while (len--) {
             int obj_id = disk_obj_id[disk_id][i];
+//            std::cerr << "[DEBUG] disk_id: " << disk_id << " disk place: " << i << " obj_id: " << obj_id << std::endl;
 
             if (obj_id == 0) {
                 i++;
@@ -1206,7 +1242,7 @@ int main() {
 
     // 主循环，处理时间片
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-        // std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
+//         std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
         //        std::endl;
         timestamp_action(); // 处理时间戳
         // std::cerr << "[DEBUG] " << "timestamp_action" << std::endl;
