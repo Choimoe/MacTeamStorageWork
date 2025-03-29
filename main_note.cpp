@@ -298,6 +298,7 @@ void delete_action() {
             object[id].active_phases.pop_front();
             if (!request[current_id].is_done) { // 这里应该总是可以删除的
                 printf("%d\n", current_id);     // 打印未完成请求的 ID
+                request[current_id].is_done = true; // 标记请求为已完成，方便从global_requests里删除
             }
             for (int j = 1; j <= REP_NUM; j++) {
                 di[object[id].replica[j]].cnt_request --;
@@ -307,6 +308,7 @@ void delete_action() {
         while (!object[id].deleted_phases.empty()) {
             int current_id = object[id].deleted_phases.front();
             object[id].deleted_phases.pop();
+            request[current_id].is_done = true; //出于一致性考虑，这里也标记为已完成
             printf("%d\n", current_id);     // 打印未完成请求的 ID
         }
 
@@ -929,7 +931,7 @@ void judge_request_on_objects(const std::set<int> &set,
             int front = deque->front(); // 取出时间最早的请求
             if (request[front].time <= object[id].last_finish_time) {
                 flag = true;
-                request[front].is_done = true;
+                request[front].is_done = true; //这里标记为true实际上是告诉clean可以删除这个请求了
                 finished_request.push_back(front);
                 deque->pop_front();
                 object[id].cnt_request--; // 修改对象的请求数量
@@ -1039,10 +1041,10 @@ std::set<int> solve_disk(int disk_id, std::string &actions,
 
         disk_head[disk_id].pos = i;
 
+//        std::cerr << "[debug] start judge_request_on_objects" << std::endl;
+        judge_request_on_objects(obj_indices, finished_request,changed_objects); // 处理被修改过的对象上潜在的请求
+//        std::cerr << "[DEBUG] finish judge_request_on_objects" << std::endl;
 
-        judge_request_on_objects(
-                obj_indices, finished_request,
-                changed_objects); // 处理被修改过的对象上潜在的请求
 //        reset_disk_cnt(changed_objects);
 //        update_disk_cnt(
 //            changed_objects); // 修改request被完成对象的计数，并更新其set
@@ -1065,6 +1067,8 @@ void set_request_info(int request_id, int object_id) {
     object[object_id].active_phases.push_back(request_id);
     object[object_id].cnt_request++;
 
+    global_requestions.push(request_id);
+
     for (int j = 1; j <= REP_NUM; j++) {
         di[object[object_id].replica[j]].cnt_request++;
     }
@@ -1072,9 +1076,14 @@ void set_request_info(int request_id, int object_id) {
 
 void clean_timeout_request() {
     //TODO:这个优化不一定和磁盘按照“有效块数量排序”兼容，没想清楚
-    static const int time_limit = 100; //超参数，时间片数
+    static const int time_limit = 95; //超参数，时间片数
     while (!global_requestions.empty()) {
         int request_id = global_requestions.front();
+        if (request[request_id].is_done) {
+            global_requestions.pop();
+            continue;
+        }
+//        std::cerr<< "[DEBUG] front request id = " << request_id << " time = " << request[request_id].time << std::endl;
         if (timestamp - request[request_id].time > time_limit) {
             global_requestions.pop();
             int obj_id = request[request_id].object_id;
@@ -1173,6 +1182,7 @@ void read_action() {
     for (int i = 1; i <= N; i++) {
         std::set<int> t = solve_disk(disk_id[i - 1], head_movement[disk_id[i - 1]], finished_request);
         changed_objects.insert(t.begin(), t.end());
+//        std::cerr << "[DEBUG] finish disk solve for i = : " << i << std::endl;
     }
 //    update_disk_cnt(changed_objects);
 
