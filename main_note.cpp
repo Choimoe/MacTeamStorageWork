@@ -599,19 +599,36 @@ std::pair<int, int> find_max_cnt_request_object(int disk_id) {
     return std::make_pair(max_cnt_request_object, max_cnt_request_rep);
 }
 
+inline bool is_valuable(int disk_id, int head) {
+    int obj_id = disk_obj_id[disk_id][head];
+
+    if (obj_id == 0) return false;
+    int block_id = disk_block_id[disk_id][head];
+
+    if (object[obj_id].cnt_request && request[object[obj_id].active_phases.back()].time >= time_vis[obj_id][block_id]) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 std::pair<int, int> get_nearest_valuable_object(int disk_id, int head) {
 //    auto ptr = di[disk_id].required.lower_bound(std::make_pair(head, 0));
 //    if (ptr != di[disk_id].required.end()) {
 //        return *ptr;
 //    }
 //    return di[disk_id].required.lower_bound(std::make_pair(1, 0));
-    int i = head, obj_id;
+    int i = head;
     int cnt = G * 2 / 3;//用来调控搜索的范围
     while (cnt--) {
-        if ((obj_id = disk_obj_id[disk_id][i]) != 0) {
-            if (object[obj_id].cnt_request) {
-                return std::make_pair(i, object[obj_id].cnt_request);
-            }
+//        if ((obj_id = disk_obj_id[disk_id][i]) != 0) {
+//            block_id = disk_block_id[disk_id][i];
+//            if (object[obj_id].cnt_request && request[object[obj_id].active_phases.back()].time >= time_vis[obj_id][block_id]) {
+//                return std::make_pair(i, object[obj_id].cnt_request);
+//            }
+//        }
+        if (is_valuable(disk_id, i)) {
+            return std::make_pair(i, object[disk_obj_id[disk_id][i]].cnt_request);
         }
         i++;
         if (i > V) i = 1;
@@ -731,11 +748,11 @@ std::string dp_plan(int disk_id, int tokens) {
     }
 
     for (int i = 1; i <= tokens; i++) {
-        int request_cnt = 0;
+        int request_cnt = is_valuable(disk_id, head) ? 1 : 0;
 
-        if (disk_obj_id[disk_id][head] != 0) {
-            request_cnt = object[disk_obj_id[disk_id][head]].cnt_request;
-        }
+//        if (disk_obj_id[disk_id][head] != 0) {
+//            request_cnt = object[disk_obj_id[disk_id][head]].cnt_request;
+//        }
 
         for (int j = 0; j <= 8; j++) {
             if (j == 0) {
@@ -932,13 +949,7 @@ void solve_disk(int disk_id, std::string &actions,
             int obj_id = disk_obj_id[disk_id][i];
 //            std::cerr << "[DEBUG] disk_id: " << disk_id << " disk place: " << i << " obj_id: " << obj_id << std::endl;
 
-            if (obj_id == 0) {
-                i++;
-                if (i > V) {
-                    i = 1;
-                }
-                continue;
-            } else if (object[obj_id].cnt_request == 0) {
+            if (!is_valuable(disk_id, i)) {
                 i++;
                 if (i > V) {
                     i = 1;
@@ -1261,16 +1272,16 @@ int main() {
 
     // 主循环，处理时间片
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-         std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
+//         std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
         //        std::endl;
         timestamp_action(); // 处理时间戳
-         std::cerr << "[DEBUG] " << "timestamp_action" << std::endl;
+//         std::cerr << "[DEBUG] " << "timestamp_action" << std::endl;
         delete_action();    // 处理删除请求
-         std::cerr << "[DEBUG] " << "delete_action" << std::endl;
+//         std::cerr << "[DEBUG] " << "delete_action" << std::endl;
         write_action();     // 处理写请求
-         std::cerr << "[DEBUG] " << "write_action" << std::endl;
+//         std::cerr << "[DEBUG] " << "write_action" << std::endl;
         read_action();      // 处理读请求
-         std::cerr << "[DEBUG] " << "read_action" << std::endl;
+//         std::cerr << "[DEBUG] " << "read_action" << std::endl;
     }
     clean(); // 清理资源
 
