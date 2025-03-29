@@ -9,6 +9,7 @@
 #include <stack>
 #include <string>
 #include <vector>
+#include <random>
 
 #define MAX_DISK_NUM (10 + 1)          // 最大磁盘数量
 #define MAX_DISK_SIZE (16384 + 1)      // 最大磁盘大小
@@ -107,6 +108,7 @@ typedef struct DiskInfo_ {
     int subhot_delete_tag[TAG_PHASE];   // 每个时间片的删除标签
     int end_point;                      // 每个磁盘的结束点
     int disk_belong_tag[MAX_DISK_SIZE]; // 每个存储单元的标签
+    int cnt_request;                    // 每个磁盘的请求数量
 
     std::set<std::pair<int, int>>
         required; // 存储磁盘每个位置的对象块对应的对象仍有多少查询未完成，只保留第二维非0的元素。
@@ -287,12 +289,15 @@ void delete_action() {
 //        if (!object[id].active_phases.empty()) {
 //            object_id_set.insert(id);
 //        }
-
+//        int *replica = object[id].replica;
         while (!object[id].active_phases.empty()) {
             int current_id = object[id].active_phases.front();
             object[id].active_phases.pop_front();
             if (!request[current_id].is_done) { // 这里应该总是可以删除的
                 printf("%d\n", current_id);     // 打印未完成请求的 ID
+            }
+            for (int j = 1; j <= REP_NUM; j++) {
+                di[object[id].replica[j]].cnt_request --;
             }
         }
         // 删除对象的副本
@@ -890,6 +895,9 @@ void judge_request_on_objects(const std::set<int> &set,
                 finished_request.push_back(front);
                 deque->pop_front();
                 object[id].cnt_request--; // 修改对象的请求数量
+                for (int j = 1; j <= REP_NUM; j++) {
+                    di[object[id].replica[j]].cnt_request--;
+                }
             } else {
                 break;
             }
@@ -1005,6 +1013,10 @@ void set_request_info(int request_id, int object_id) {
     object[object_id].last_request_point = request[request_id].time;
     object[object_id].active_phases.push_back(request_id);
     object[object_id].cnt_request++;
+
+    for (int j = 1; j <= REP_NUM; j++) {
+        di[object[object_id].replica[j]].cnt_request++;
+    }
 }
 
 void clean_timeout_request() {
@@ -1031,9 +1043,35 @@ void read_action() {
 
     std::string head_movement[N + 1]; // 存储磁头移动记录
     std::vector<int> finished_request;
+    std::vector<int> disk_id;
+
+    for (int i = 1; i <= N; i++) {
+        disk_id.push_back(i);
+    }
+
+    //可能的排序比较函数
+    // 0.random
+    // 1.此刻磁盘上的有效请求数目
+    // 2.此刻磁盘上还可以获得的分数
+    // 3.此刻磁盘上需要读取的块的数量
+    // 4.last_action读的次数排序降序排
+
+    //方法0
+    std::shuffle(disk_id.begin(), disk_id.end(), std::default_random_engine(timestamp));
+
+    //方法1
+//    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
+//        return di[a].cnt_request > di[b].cnt_request;
+//    });
+
+    //方法3
+//    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
+//
+//    });
+
 //    std::set<int> changed_objects;
     for (int i = 1; i <= N; i++) {
-        solve_disk(i, head_movement[i], finished_request);
+        solve_disk(disk_id[i - 1], head_movement[disk_id[i - 1]], finished_request);
 //        changed_objects.insert(t.begin(), t.end());
     }
 //    update_disk_cnt(changed_objects);
