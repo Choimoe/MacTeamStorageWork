@@ -109,6 +109,7 @@ typedef struct DiskInfo_ {
     int end_point;                      // 每个磁盘的结束点
     int disk_belong_tag[MAX_DISK_SIZE]; // 每个存储单元的标签
     int cnt_request;                    // 每个磁盘的请求数量
+    int valuable_block_num;             // 每个磁盘的有价值的块数量
 
     std::set<std::pair<int, int>>
         required; // 存储磁盘每个位置的对象块对应的对象仍有多少查询未完成，只保留第二维非0的元素。
@@ -1022,6 +1023,18 @@ void set_request_info(int request_id, int object_id) {
 void clean_timeout_request() {
 }
 
+void update_valuable_block_num() {
+    for (int i = 1; i <= N; i++) {
+        int cnt = 0;
+        for (int j = 1; j <= V; j++) {
+            if (is_valuable(i, j)) {
+                cnt++;
+            }
+        }
+        di[i].valuable_block_num = cnt;
+    }
+}
+
 /**
  * 处理读入操作
  */
@@ -1057,7 +1070,7 @@ void read_action() {
     // 4.last_action读的次数排序降序排
 
     //方法0
-    std::shuffle(disk_id.begin(), disk_id.end(), std::default_random_engine(timestamp));
+//    std::shuffle(disk_id.begin(), disk_id.end(), std::default_random_engine(timestamp));
 
     //方法1
 //    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
@@ -1065,9 +1078,9 @@ void read_action() {
 //    });
 
     //方法3
-//    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
-//
-//    });
+    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
+        return di[a].valuable_block_num < di[b].valuable_block_num;
+    });
 
 //    std::set<int> changed_objects;
     for (int i = 1; i <= N; i++) {
@@ -1090,6 +1103,7 @@ void read_action() {
     }
 
     clean_timeout_request();
+    update_valuable_block_num();
 
     fflush(stdout);
 }
