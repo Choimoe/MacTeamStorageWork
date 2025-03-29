@@ -1070,7 +1070,7 @@ void read_action() {
     // 4.last_action读的次数排序降序排
 
     //方法0
-//    std::shuffle(disk_id.begin(), disk_id.end(), std::default_random_engine(timestamp));
+    std::shuffle(disk_id.begin(), disk_id.end(), std::default_random_engine(timestamp));
 
     //方法1
 //    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
@@ -1078,8 +1078,27 @@ void read_action() {
 //    });
 
     //方法3
+    //需要同时把update_valuable_block_num()注释掉
+//    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
+//        return di[a].valuable_block_num < di[b].valuable_block_num;
+//    });
+
+    //方法4
+    /**
+     * 优先读，如果都不是读就按照cnt_request排序。
+     * 如果都是读，则按照last_token排序。
+     */
     std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
-        return di[a].valuable_block_num < di[b].valuable_block_num;
+        if (disk_head[a].last_action == 2 && disk_head[b].last_action == 2) {
+            return disk_head[a].last_token > disk_head[b].last_token;
+        } else if (disk_head[a].last_action == 2) {
+            return true;
+        } else if (disk_head[b].last_action == 2) {
+            return false;
+        } else {
+            return di[a].cnt_request > di[b].cnt_request;
+//            return di[a].valuable_block_num < di[b].valuable_block_num;
+        }
     });
 
 //    std::set<int> changed_objects;
@@ -1103,7 +1122,7 @@ void read_action() {
     }
 
     clean_timeout_request();
-    update_valuable_block_num();
+//    update_valuable_block_num();
 
     fflush(stdout);
 }
