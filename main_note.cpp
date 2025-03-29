@@ -278,15 +278,15 @@ void delete_action() {
         abort_num += object[id].cnt_request;
     }
 
-    std::set<int> object_id_set;
+//    std::set<int> object_id_set;
 
     printf("%d\n", abort_num); // 打印未完成请求的数量
     for (int i = 1; i <= n_delete; i++) {
         int id = _id[i];
 
-        if (!object[id].active_phases.empty()) {
-            object_id_set.insert(id);
-        }
+//        if (!object[id].active_phases.empty()) {
+//            object_id_set.insert(id);
+//        }
 
         while (!object[id].active_phases.empty()) {
             int current_id = object[id].active_phases.front();
@@ -308,7 +308,7 @@ void delete_action() {
         object[id].is_delete = true; // 标记对象为已删除
     }
 
-    update_disk_cnt(object_id_set); // 增加请求数量后需要更新磁盘上的set
+//    update_disk_cnt(object_id_set); // 增加请求数量后需要更新磁盘上的set
     fflush(stdout);                 // 刷新输出缓冲区
 }
 
@@ -598,6 +598,27 @@ std::pair<int, int> find_max_cnt_request_object(int disk_id) {
     }
     return std::make_pair(max_cnt_request_object, max_cnt_request_rep);
 }
+
+std::pair<int, int> get_nearest_valuable_object(int disk_id, int head) {
+//    auto ptr = di[disk_id].required.lower_bound(std::make_pair(head, 0));
+//    if (ptr != di[disk_id].required.end()) {
+//        return *ptr;
+//    }
+//    return di[disk_id].required.lower_bound(std::make_pair(1, 0));
+    int i = head, obj_id;
+    int cnt = G * 2 / 3;//用来调控搜索的范围
+    while (cnt--) {
+        if ((obj_id = disk_obj_id[disk_id][i]) != 0) {
+            if (object[obj_id].cnt_request) {
+                return std::make_pair(i, object[obj_id].cnt_request);
+            }
+        }
+        i++;
+        if (i > V) i = 1;
+    }
+    return std::make_pair(-1, 0);
+}
+
 /**
  *  决策disk_id这块硬盘是否需要进行jump，以及决策首地址。
  * @param disk_id 磁盘编号
@@ -610,7 +631,8 @@ std::pair<int, int> jump_decision(int disk_id) {
     // 当前的策略是保持不动
 
     int head = disk_head[disk_id].pos;
-    auto ptr = di[disk_id].required.lower_bound(std::make_pair(head, 0));
+//    auto ptr = di[disk_id].required.lower_bound(std::make_pair(head, 0));
+    auto ptr = get_nearest_valuable_object(disk_id, head);
 
     int time_slide_num = timestamp / 1800 + 1; // 下一个时间片
     int tag_id = di[disk_id].subhot_read_tag[time_slide_num];
@@ -622,9 +644,10 @@ std::pair<int, int> jump_decision(int disk_id) {
         }
     }
 
-    if (ptr == di[disk_id].required.end()) {//如果磁头后不存在有效对象块
-        ptr = di[disk_id].required.lower_bound(std::make_pair(1, 0));//从头再找一次
-        if (ptr == di[disk_id].required.end()) {//如果从头再找一次，还是不存在有效对象块
+    if (ptr.first == -1) {//如果磁头后不存在有效对象块
+//        ptr = di[disk_id].required.lower_bound(std::make_pair(1, 0));//从头再找一次
+        ptr = get_nearest_valuable_object(disk_id, 1);
+        if (ptr.first == -1) {//如果从头再找一次，还是不存在有效对象块
             auto max_cnt_request_object = find_max_cnt_request_object(disk_id);//找出当前磁盘上，cnt_request最大的object
             if (max_cnt_request_object.first != 0) {
                 return std::make_pair(
@@ -642,7 +665,7 @@ std::pair<int, int> jump_decision(int disk_id) {
             // }
         }
 
-        int dist = get_distance(head, ptr->first);
+        int dist = get_distance(head, ptr.first);
 
         // if (dist >= G) {
         //     return std::make_pair(
@@ -656,11 +679,11 @@ std::pair<int, int> jump_decision(int disk_id) {
                     1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1]);
             }
         }
-        return std::make_pair(0, ptr->first); // 反之使用pass即可。
+        return std::make_pair(0, ptr.first); // 反之使用pass即可。
         // }
     }
 
-    int dist = get_distance(head, ptr->first);
+    int dist = get_distance(head, ptr.first);
     if (dist >= G * 2 / 3)
     {
         auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
@@ -669,7 +692,7 @@ std::pair<int, int> jump_decision(int disk_id) {
                 1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1]);
         }
     }
-    return std::make_pair(0, ptr->first); // 反之使用pass即可。
+    return std::make_pair(0, ptr.first); // 反之使用pass即可。
     // if (dist >= G) {
     //     auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
     //     if (max_cnt_request_object.first != 0) {
@@ -865,9 +888,8 @@ void judge_request_on_objects(const std::set<int> &set,
  * @param disk_id 磁盘编号
  * @param actions 记录磁头移动的字符串
  * @param finished_request 记录已经完成的请求
- * @return 该磁盘在该时间片的操作序列（string）
  */
-std::set<int> solve_disk(int disk_id, std::string &actions,
+void solve_disk(int disk_id, std::string &actions,
                 std::vector<int> &finished_request) {
     auto p = jump_decision(disk_id); // 决策初始位置，以及是否不得不使用jump
     // if(p.first == 1) {
@@ -952,10 +974,10 @@ std::set<int> solve_disk(int disk_id, std::string &actions,
             obj_indices, finished_request,
             changed_objects); // 处理被修改过的对象上潜在的请求
         // reset_disk_cnt(changed_objects);
-        update_disk_cnt(
-            changed_objects); // 修改request被完成对象的计数，并更新其set
+//        update_disk_cnt(
+//            changed_objects); // 修改request被完成对象的计数，并更新其set
     }
-    return changed_objects;
+//    return changed_objects;
 }
 
 /**
@@ -985,25 +1007,25 @@ void read_action() {
     int request_id = -1, object_id; // 请求 ID 和对象 ID
     scanf("%d", &n_read);           // 读取请求数量
 
-    std::set<int> object_id_set;
+//    std::set<int> object_id_set;
 
     for (int i = 1; i <= n_read; i++) {
         scanf("%d%d", &request_id, &object_id);
         // std::cerr << "[DEBUG] read_action ["<<i<<"]: request_id = " << request_id << ", object_id = " << object_id << std::endl;
         set_request_info(request_id, object_id);
-        object_id_set.insert(object_id);
+//        object_id_set.insert(object_id);
     }
     // std::cerr << "[DEBUG] read_action"<<n_read << std::endl;
-    update_disk_cnt(object_id_set); // 增加请求数量后需要更新磁盘上的set
+//    update_disk_cnt(object_id_set); // 增加请求数量后需要更新磁盘上的set
 
     std::string head_movement[N + 1]; // 存储磁头移动记录
     std::vector<int> finished_request;
-    std::set<int> changed_objects;
+//    std::set<int> changed_objects;
     for (int i = 1; i <= N; i++) {
-        std::set<int> t = solve_disk(i, head_movement[i], finished_request);
-        changed_objects.insert(t.begin(), t.end());
+        solve_disk(i, head_movement[i], finished_request);
+//        changed_objects.insert(t.begin(), t.end());
     }
-    update_disk_cnt(changed_objects);
+//    update_disk_cnt(changed_objects);
 
     for (int i = 1; i <= N; i++) {
         printf("%s", head_movement[i].c_str());
@@ -1236,16 +1258,16 @@ int main() {
 
     // 主循环，处理时间片
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-//         std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
+         std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
         //        std::endl;
         timestamp_action(); // 处理时间戳
-        // std::cerr << "[DEBUG] " << "timestamp_action" << std::endl;
+         std::cerr << "[DEBUG] " << "timestamp_action" << std::endl;
         delete_action();    // 处理删除请求
-        // std::cerr << "[DEBUG] " << "delete_action" << std::endl;
+         std::cerr << "[DEBUG] " << "delete_action" << std::endl;
         write_action();     // 处理写请求
-        // std::cerr << "[DEBUG] " << "write_action" << std::endl;
+         std::cerr << "[DEBUG] " << "write_action" << std::endl;
         read_action();      // 处理读请求
-        // std::cerr << "[DEBUG] " << "read_action" << std::endl;
+         std::cerr << "[DEBUG] " << "read_action" << std::endl;
     }
     clean(); // 清理资源
 
