@@ -1116,53 +1116,47 @@ void preprocess_tag() {
         }
     }
 
-    std::vector<std::pair<int, int>> current_space;
+
+    std::priority_queue<std::pair<int, int>> current_space;
     for (int i = 1; i <= N; i++)
-        current_space.emplace_back(V - start_point[i] + 1, i);
+        current_space.emplace(V - start_point[i] + 1, i);
 
-    auto calc_next_tag = [&](int disk_id, int tag) {
-        long long max_dot = -1;
-        int next_tag = -1;
-        for (int nxt = 1; nxt <= M; nxt++) {
-            if (alloced[disk_id].count(nxt)) continue;
-            if (hot_tag_alloc[nxt].remain_alloc_num == 0) continue;
-            long long dot = 0;
-            for (int i = 1; i <= slice_num; i++) {
-                dot = dot + fre_read[tag][i] * fre_read[nxt][i];
+    for (auto i : tag_id) {
+        if (!hot_tag_alloc[i].is_hot) {
+            int size = fre_write[i][0] - fre_del[i][0];
+            tag_alloc_length[i] = size;
+            std::vector<std::pair<int, int>> selected_disk(REP_NUM + 1);
+            for (int j = 1; j <= REP_NUM; j++) {
+                auto it = current_space.top();
+                selected_disk[j] = std::make_pair(it.first, it.second);
+                current_space.pop();
             }
-            if (dot > max_dot) {
-                max_dot = dot;
-                next_tag = nxt;
-            }
-        }
-        return next_tag;
-    };
-
-    while(tot_replica_num) {
-        std::sort(current_space.begin(), current_space.end(), [](auto a, auto b){
-            return a.first > b.first;
-        });
-
-        int next_tag = -1, next_disk = -1;
-
-        for (double rate_limit = 0.5; next_tag == -1 && rate_limit < 1.2; rate_limit += 0.2) {
-            for (auto did : current_space) {
-                int disk_i = did.second;
-                if (start_point[disk_i] == V) continue;
-                int nxt = calc_next_tag(disk_i, top[disk_i]);
-                if (nxt == -1) continue;
-                int size = fre_write[nxt][0] - fre_del[nxt][0];
-                if (total_point[disk_i] + size < V * rate_limit) {
-                    next_tag = nxt;
-                    next_disk = disk_i;
-                    break;
-                }
+            for (int j = 1; j <= REP_NUM; j++) {
+                int cur_disk_id = selected_disk[j].second;
+                int cur_size = size * (1 + 0.05);
+                current_space.emplace(selected_disk[j].first - cur_size,
+                                      cur_disk_id);
+                update_disk(i, j, cur_disk_id, cur_size);
             }
         }
+    }
 
-        int size = fre_write[next_tag][0] - fre_del[next_tag][0];
-        int rep = REP_NUM + 1 - hot_tag_alloc[next_tag].remain_alloc_num;
-        update_disk(next_tag, rep, next_disk, size);
+    for (auto i : hot_tag) {
+        int size = fre_write[i][0] - fre_del[i][0];
+        size = (int)(size * 1.02);
+        tag_alloc_length[i] = size;
+        std::vector<std::pair<int, int>> selected_disk(REP_NUM + 1);
+        for (int j = region_first_order + 1; j <= REP_NUM; j++) {
+            auto it = current_space.top();
+            selected_disk[j] = std::make_pair(it.first, it.second);
+            current_space.pop();
+        }
+        for (int j = region_first_order + 1; j <= REP_NUM; j++) {
+            int cur_disk_id = selected_disk[j].second;
+            current_space.emplace(selected_disk[j].first - size,
+                                    cur_disk_id);
+            update_disk(i, j, cur_disk_id, size);
+        }
     }
 
     for (int i = 1; i <= N; i++) {
