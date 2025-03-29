@@ -1096,6 +1096,7 @@ void read_action() {
 
     //方法0
     std::shuffle(disk_id.begin(), disk_id.end(), std::default_random_engine(timestamp));
+    std::shuffle(disk_id.begin(), disk_id.end(), std::default_random_engine(timestamp));
 
     //方法1
 //    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
@@ -1103,6 +1104,16 @@ void read_action() {
 //    });
 
     //方法3
+    //需要同时把update_valuable_block_num()注释掉
+//    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
+//        return di[a].valuable_block_num < di[b].valuable_block_num;
+//    });
+
+    //方法4
+    /**
+     * 优先读，如果都不是读就按照cnt_request排序。
+     * 如果都是读，则按照last_token排序。
+     */
     //需要同时把update_valuable_block_num()注释掉
 //    std::sort(disk_id.begin(), disk_id.end(), [](int a, int b) {
 //        return di[a].valuable_block_num < di[b].valuable_block_num;
