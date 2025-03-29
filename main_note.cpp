@@ -62,6 +62,7 @@ typedef struct Object_ {
     int last_finish_time{};
 
     std::deque<int> active_phases;
+    std::queue<int> deleted_phases; //被认为删除掉的请求
 } Object;
 
 /**
@@ -78,6 +79,7 @@ typedef struct DiskHead_ {
 
 // 全局变量
 Request request[MAX_REQUEST_NUM]; // 请求数组
+std::queue<int> global_requestions; // 全局的请求队列，按照时间戳天然不降序
 Object object[MAX_OBJECT_NUM];    // 对象数组
 int total_request_num = 0;
 int total_object_num = 0;
@@ -87,11 +89,11 @@ int disk_obj_id[MAX_DISK_NUM][MAX_DISK_SIZE];   // 磁盘上存储的obj的id
 int disk_block_id[MAX_DISK_NUM][MAX_DISK_SIZE]; // 磁盘上存储的obj的block的编号
 int timestamp;                                  // 当前时间戳
 int time_vis[MAX_OBJECT_NUM]
-            [MAX_OBJECT_SIZE]; // 表示每个对象块最后一次被read的时间
+[MAX_OBJECT_SIZE]; // 表示每个对象块最后一次被read的时间
 
 DiskHead disk_head[MAX_DISK_NUM]; // 磁头状态数组
 std::priority_queue<std::pair<int, int>>
-    disk_requests[MAX_DISK_NUM]; // 存储新请求的栈
+        disk_requests[MAX_DISK_NUM]; // 存储新请求的栈
 
 int fre_del[MAX_TAG_NUM][TAG_PHASE];   // 每个标签的每个阶段删除的对象大小
 int fre_write[MAX_TAG_NUM][TAG_PHASE]; // 每个标签的每个阶段写入的对象大小
@@ -112,7 +114,7 @@ typedef struct DiskInfo_ {
     int valuable_block_num;             // 每个磁盘的有价值的块数量
 
     std::set<std::pair<int, int>>
-        required; // 存储磁盘每个位置的对象块对应的对象仍有多少查询未完成，只保留第二维非0的元素。
+            required; // 存储磁盘每个位置的对象块对应的对象仍有多少查询未完成，只保留第二维非0的元素。
 } DiskInfo;
 
 DiskInfo di[MAX_DISK_NUM];
@@ -196,7 +198,7 @@ void do_object_delete(const int *object_unit, const int disk_id, int size) {
         disk_obj_id[disk_id][object_unit[i]] = 0;   // 清空磁盘obj_id
         disk_block_id[disk_id][object_unit[i]] = 0; // 清空磁盘 block_id
         di[disk_id]
-            .distribute_length[di[disk_id].disk_belong_tag[object_unit[i]]]--;
+                .distribute_length[di[disk_id].disk_belong_tag[object_unit[i]]]--;
     }
 }
 
@@ -211,7 +213,7 @@ void update_disk_cnt(const std::set<int> &object_id_set) {
             for (int i = 1; i <= object[object_id].size; i++) {
                 int index = object[object_id].unit[rep][i];
                 auto p =
-                    di[disk_id].required.lower_bound(std::make_pair(index, 0));
+                        di[disk_id].required.lower_bound(std::make_pair(index, 0));
 
                 if (p != di[disk_id].required.end() &&
                     p->first == index) { // 删除原来的
@@ -220,7 +222,7 @@ void update_disk_cnt(const std::set<int> &object_id_set) {
 
                 if (object[object_id].cnt_request > 0) // 增加新的
                     di[disk_id].required.insert(
-                        std::make_pair(index, object[object_id].cnt_request));
+                            std::make_pair(index, object[object_id].cnt_request));
             }
         }
     }
@@ -237,7 +239,7 @@ void reset_disk_cnt(const std::set<int> &object_id_set) {
             for (int i = 1; i <= object[object_id].size; i++) {
                 int index = object[object_id].unit[rep][i];
                 auto p =
-                    di[disk_id].required.lower_bound(std::make_pair(index, 0));
+                        di[disk_id].required.lower_bound(std::make_pair(index, 0));
 
                 if (p != di[disk_id].required.end() &&
                     p->first == index) { // 删除原来的
@@ -278,7 +280,7 @@ void delete_action() {
     //    }
     for (int i = 1; i <= n_delete; i++) {
         int id = _id[i];
-        abort_num += object[id].cnt_request;
+        abort_num += object[id].cnt_request + object[id].deleted_phases.size();
     }
 
 //    std::set<int> object_id_set;
@@ -301,6 +303,13 @@ void delete_action() {
                 di[object[id].replica[j]].cnt_request --;
             }
         }
+
+        while (!object[id].deleted_phases.empty()) {
+            int current_id = object[id].deleted_phases.front();
+            object[id].deleted_phases.pop();
+            printf("%d\n", current_id);     // 打印未完成请求的 ID
+        }
+
         // 删除对象的副本
         for (int j = 1; j <= REP_NUM; j++) {
             // do_object_delete(object[id].unit[j],
@@ -361,7 +370,7 @@ std::vector<int> select_disks_for_object(int id) {
         int contiguous = calculate_max_contiguous(target_hot_disk, hot_tag_alloc[tag].start[i], tag_alloc_length[tag]);
         int fixed_score = V * N;
         if (di[target_hot_disk]
-                .subhot_delete_tag[(timestamp - 1) / FRE_PER_SLICING + 1] ==
+                    .subhot_delete_tag[(timestamp - 1) / FRE_PER_SLICING + 1] ==
             tag) {
             if (di[target_hot_disk].distribute_length[tag] * 2 <
                 tag_alloc_length[tag] / MAX_OBJECT_SIZE) {
@@ -414,6 +423,7 @@ std::vector<int> select_disks_for_object(int id) {
 std::vector<int> allocate_contiguous_blocks(int disk_id, int size,
                                             int object_id,
                                             bool reverse_blocks) {
+//    reverse_blocks = false;
     int tag = object[object_id].tag;
     int start = -1, rep_id = 0;
     for (int i = 1; i <= REP_NUM; i++) {
@@ -441,9 +451,9 @@ std::vector<int> allocate_contiguous_blocks(int disk_id, int size,
             blocks.push_back(block_pos);
             disk_obj_id[disk_id][block_pos] = object_id; // 填充对象编号
             disk_block_id[disk_id][block_pos] =
-                reverse_blocks ? size - j : j + 1; // 填充对象块编号
+                    reverse_blocks ? size - j : j + 1; // 填充对象块编号
             di[disk_id]
-                .distribute_length[di[disk_id].disk_belong_tag[block_pos]]--;
+                    .distribute_length[di[disk_id].disk_belong_tag[block_pos]]--;
         }
         if (reverse_blocks)
             std::reverse(blocks.begin(), blocks.end()); // 翻转块
@@ -555,10 +565,10 @@ void write_action() {
         for (int j = 1; j <= REP_NUM; j++) {
             int disk_id = selected_disks[j - 1];
             std::vector<int> blocks = allocate_contiguous_blocks(
-                disk_id, size, id, j & 1);   // 奇数翻转，偶数不变
+                    disk_id, size, id, j & 1);   // 奇数翻转，偶数不变
             object[id].replica[j] = disk_id; // 计算副本的 ID
             object[id].unit[j] = static_cast<int *>(
-                malloc(sizeof(int) * (size + 1))); // 分配内存以存储对象数据
+                    malloc(sizeof(int) * (size + 1))); // 分配内存以存储对象数据
             for (int _ = 0; _ < size; _++) {
                 object[id].unit[j][_ + 1] = blocks[_];
             }
@@ -585,7 +595,7 @@ void write_action() {
     fflush(stdout); // 刷新输出缓冲区
 }
 std::pair<int, int> find_max_cnt_request_object(int disk_id) {
-        //遍历所有object, 找出当前磁盘上，cnt_request最大的object
+    //遍历所有object, 找出当前磁盘上，cnt_request最大的object
     int max_cnt_request = 0;
     int max_cnt_request_object = 0;
     int max_cnt_request_rep = 0;
@@ -673,12 +683,19 @@ std::pair<int, int> jump_decision(int disk_id) {
         if (ptr.first == -1) {//如果从头再找一次，还是不存在有效对象块
             auto max_cnt_request_object = find_max_cnt_request_object(disk_id);//找出当前磁盘上，cnt_request最大的object
             if (max_cnt_request_object.first != 0) {
-                return std::make_pair(
-                    1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1]);
+                int position = max_cnt_request_object.second & 1 ? object[max_cnt_request_object.first].size : 1;
+                int dist = get_distance(head, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+                if (dist >= G * 10 / 10) {
+                    return std::make_pair(
+                            1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+                }
+                else{
+                    return std::make_pair(0, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+                }
             }
-            else{
-                return std::make_pair(1, 1);//直接跳到1号位置
-            }
+            // else{
+            //     return std::make_pair(1, 1);//直接跳到1号位置
+            // }
             // if (rep != -1) {
             //     return std::make_pair(
             //         1, hot_tag_alloc[tag_id]
@@ -694,25 +711,45 @@ std::pair<int, int> jump_decision(int disk_id) {
         //     return std::make_pair(
         //         1, ptr->first); // 如果距离大于等于G，那么只能jump
         // } else {
-        if (dist >= G * 2 / 3)
+        if (dist >= G * 1 / 10)
         {
             auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
             if (max_cnt_request_object.first != 0) {
-                return std::make_pair(
-                    1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1]);
+                int position = max_cnt_request_object.second & 1 ? object[max_cnt_request_object.first].size : 1;
+                int dist = get_distance(head, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+                if (dist >= G * 10 / 10) {
+                    return std::make_pair(
+                            1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+                }
+                else{
+                    return std::make_pair(0, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+                }
             }
         }
         return std::make_pair(0, ptr.first); // 反之使用pass即可。
+        // return std::make_pair(1, 1);
         // }
     }
-
+    // 2/10: 8857741.6425 (63.9658%)
+    // 3/10: 8857741.6425 (63.9658%)
+    // 4/10: 8881537.3925 (64.1377%)
+    // 5/10: 8842716.1250 (63.8573%)
+    // 7/10: 8853003.9975 (63.9316%)
+    // 9/10: 8792705.4650 (63.4962%)
     int dist = get_distance(head, ptr.first);
-    if (dist >= G * 2 / 3)
+    if (dist >= G * 1 / 20)
     {
         auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
         if (max_cnt_request_object.first != 0) {
-            return std::make_pair(
-                1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][1]);
+            int position = max_cnt_request_object.second & 1 ? object[max_cnt_request_object.first].size : 1;
+            int dist = get_distance(head, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+            if (dist >= G * 10 / 10) {
+                return std::make_pair(
+                        1, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+            }
+            else{
+                return std::make_pair(0, object[max_cnt_request_object.first].unit[max_cnt_request_object.second][position]);
+            }
         }
     }
     return std::make_pair(0, ptr.first); // 反之使用pass即可。
@@ -903,6 +940,19 @@ void judge_request_on_objects(const std::set<int> &set,
                 break;
             }
         }
+
+        auto *queue = &object[id].deleted_phases;
+        while (!queue->empty()) {
+            int front = queue->front(); // 取出时间最早的请求
+            if (request[front].time <= object[id].last_finish_time) {
+                flag = true;
+                request[front].is_done = true;
+                finished_request.push_back(front);
+                queue->pop();
+            } else {
+                break;
+            }
+        }
         if (flag) {
             changed_objects.insert(id);
         }
@@ -915,8 +965,8 @@ void judge_request_on_objects(const std::set<int> &set,
  * @param actions 记录磁头移动的字符串
  * @param finished_request 记录已经完成的请求
  */
-void solve_disk(int disk_id, std::string &actions,
-                std::vector<int> &finished_request) {
+std::set<int> solve_disk(int disk_id, std::string &actions,
+                         std::vector<int> &finished_request) {
     auto p = jump_decision(disk_id); // 决策初始位置，以及是否不得不使用jump
     // if(p.first == 1) {
     //     auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
@@ -978,7 +1028,7 @@ void solve_disk(int disk_id, std::string &actions,
             //            //修改对象的最后完整访问时间。
             if (min_time != 1000000) {
                 object[obj_id].last_finish_time =
-                    std::max(object[obj_id].last_finish_time, min_time);
+                        std::max(object[obj_id].last_finish_time, min_time);
             }
 
             i++;
@@ -991,13 +1041,13 @@ void solve_disk(int disk_id, std::string &actions,
 
 
         judge_request_on_objects(
-            obj_indices, finished_request,
-            changed_objects); // 处理被修改过的对象上潜在的请求
-        // reset_disk_cnt(changed_objects);
+                obj_indices, finished_request,
+                changed_objects); // 处理被修改过的对象上潜在的请求
+//        reset_disk_cnt(changed_objects);
 //        update_disk_cnt(
 //            changed_objects); // 修改request被完成对象的计数，并更新其set
     }
-//    return changed_objects;
+    return changed_objects;
 }
 
 /**
@@ -1021,6 +1071,24 @@ void set_request_info(int request_id, int object_id) {
 }
 
 void clean_timeout_request() {
+    //TODO:这个优化不一定和磁盘按照“有效块数量排序”兼容，没想清楚
+    static const int time_limit = 100; //超参数，时间片数
+    while (!global_requestions.empty()) {
+        int request_id = global_requestions.front();
+        if (timestamp - request[request_id].time > time_limit) {
+            global_requestions.pop();
+            int obj_id = request[request_id].object_id;
+
+            object[obj_id].active_phases.pop_front();
+            object[obj_id].cnt_request--;
+            for (int j = 1; j <= REP_NUM; j++) {
+                di[object[obj_id].replica[j]].cnt_request--;
+            }
+            object[obj_id].deleted_phases.push(request_id);
+        } else {
+            break;
+        }
+    }
 }
 
 void update_valuable_block_num() {
@@ -1092,19 +1160,19 @@ void read_action() {
         if (disk_head[a].last_action == 2 && disk_head[b].last_action == 2) {
             return disk_head[a].last_token > disk_head[b].last_token;
         } else if (disk_head[a].last_action == 2) {
-            return true;
+            return true; // 28400043.5997
         } else if (disk_head[b].last_action == 2) {
-            return false;
+            return false;  // 28458840.0522
         } else {
-            return di[a].cnt_request > di[b].cnt_request;
-//            return di[a].valuable_block_num < di[b].valuable_block_num;
+            return di[a].cnt_request > di[b].cnt_request;//请求数
+            //    return di[a].valuable_block_num < di[b].valuable_block_num;//有效数，方法3
         }
     });
 
-//    std::set<int> changed_objects;
+    std::set<int> changed_objects;
     for (int i = 1; i <= N; i++) {
-        solve_disk(disk_id[i - 1], head_movement[disk_id[i - 1]], finished_request);
-//        changed_objects.insert(t.begin(), t.end());
+        std::set<int> t = solve_disk(disk_id[i - 1], head_movement[disk_id[i - 1]], finished_request);
+        changed_objects.insert(t.begin(), t.end());
     }
 //    update_disk_cnt(changed_objects);
 
@@ -1122,7 +1190,7 @@ void read_action() {
     }
 
     clean_timeout_request();
-//    update_valuable_block_num();
+    // update_valuable_block_num();//28412380.1172
 
     fflush(stdout);
 }
@@ -1261,7 +1329,7 @@ void preprocess_tag() {
         for (int j = region_first_order + 1; j <= REP_NUM; j++) {
             int cur_disk_id = selected_disk[j].second;
             current_space.emplace(selected_disk[j].first - size,
-                                    cur_disk_id);
+                                  cur_disk_id);
             update_disk(i, j, cur_disk_id, size);
         }
     }
@@ -1271,7 +1339,7 @@ void preprocess_tag() {
     }
 
     std::vector<std::vector<std::pair<int, int>>> disk_distribute_vector(
-        N + 1, std::vector<std::pair<int, int>>());
+            N + 1, std::vector<std::pair<int, int>>());
 
     for (auto i : tag_id) {
         //    std::cerr << "[DEBUG] tag: " << i << " is_hot: " <<
@@ -1281,7 +1349,7 @@ void preprocess_tag() {
             //    hot_tag_alloc[i].disk[j] << " start: " <<
             //    hot_tag_alloc[i].start[j] << std::endl;
             disk_distribute_vector[hot_tag_alloc[i].disk[j]].emplace_back(
-                hot_tag_alloc[i].start[j], i);
+                    hot_tag_alloc[i].start[j], i);
         }
     }
 
@@ -1363,3 +1431,6 @@ int main() {
 // 仅仅使用2-3: 7044253.9875: 25552872.98
 // 仅仅私用1-3: 7246190.0550:
 // object-based: 7176277.4525
+// 8881537.3925 (64.1377%)
+// 8828032.1025 (63.7513%)
+// 8833658.2175 (63.7919%)
