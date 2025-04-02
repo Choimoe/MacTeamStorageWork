@@ -55,3 +55,9 @@ settings.py.example
 *.exe
 *.zip
 main
+*.ps1
+
+replay/
+log.txt
+result.txt
+score*/
