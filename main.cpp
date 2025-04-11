@@ -55,16 +55,10 @@ int main() {
 
     // 主循环，处理时间片
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
-//         std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
-        //        std::endl;
         timestamp_action(); // 处理时间戳
-//         std::cerr << "[DEBUG] " << "timestamp_action" << std::endl;
         delete_action();    // 处理删除请求
-//         std::cerr << "[DEBUG] " << "delete_action" << std::endl;
         write_action();     // 处理写请求
-//         std::cerr << "[DEBUG] " << "write_action" << std::endl;
         read_action();      // 处理读请求
-//         std::cerr << "[DEBUG] " << "read_action" << std::endl;
         if (t % 1800 == 0) {
             garbage_collection_action();
         }

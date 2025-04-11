@@ -14,34 +14,14 @@ DiskHead disk_head[MAX_DISK_NUM][MAX_DISK_HEAD_NUM + 1];
 std::queue<int> global_requestions; // 全局的请求队列，按照时间戳天然不降序
 std::queue<int> timeout_request;
 
-void reset_disk_cnt(const std::set<int> &object_id_set) {
-    for (int object_id : object_id_set) {
-        for (int rep = 1; rep <= REP_NUM; rep++) {
-            int disk_id = object[object_id].replica[rep];
-            for (int i = 1; i <= object[object_id].size; i++) {
-                int index = object[object_id].unit[rep][i];
-                auto p = di[disk_id].required.lower_bound(std::make_pair(index, 0));
-
-                if (p != di[disk_id].required.end() &&
-                    p->first == index) { // 删除原来的
-                    di[disk_id].required.erase(p);
-                }
-
-                // if (object[object_id].cnt_request > 0) // 增加新的
-                //     di[disk_id].required.insert(
-                //         std::make_pair(index, object[object_id].cnt_request));
-            }
-        }
-    }
-}
-
 void update_disk_cnt(const std::set<int> &object_id_set) {
     for (int object_id : object_id_set) {
         for (int rep = 1; rep <= REP_NUM; rep++) {
             int disk_id = object[object_id].replica[rep];
             for (int i = 1; i <= object[object_id].size; i++) {
                 int index = object[object_id].unit[rep][i];
-                auto p = di[disk_id].required.lower_bound(std::make_pair(index, 0));
+                auto p =
+                        di[disk_id].required.lower_bound(std::make_pair(index, 0));
 
                 if (p != di[disk_id].required.end() &&
                     p->first == index) { // 删除原来的
@@ -56,7 +36,30 @@ void update_disk_cnt(const std::set<int> &object_id_set) {
     }
 }
 
+void reset_disk_cnt(const std::set<int> &object_id_set) {
+    for (int object_id : object_id_set) {
+        for (int rep = 1; rep <= REP_NUM; rep++) {
+            int disk_id = object[object_id].replica[rep];
+            for (int i = 1; i <= object[object_id].size; i++) {
+                int index = object[object_id].unit[rep][i];
+                auto p =
+                        di[disk_id].required.lower_bound(std::make_pair(index, 0));
+
+                if (p != di[disk_id].required.end() &&
+                    p->first == index) { // 删除原来的
+                    di[disk_id].required.erase(p);
+                }
+
+                // if (object[object_id].cnt_request > 0) // 增加新的
+                //     di[disk_id].required.insert(
+                //         std::make_pair(index, object[object_id].cnt_request));
+            }
+        }
+    }
+}
+
 std::pair<int, int> find_max_cnt_request_object(int disk_id) {
+    //遍历所有object, 找出当前磁盘上，cnt_request最大的object
     int max_cnt_request = 0;
     int max_cnt_request_object = 0;
     int max_cnt_request_rep = 0;
@@ -220,7 +223,7 @@ std::pair<int, int> jump_decision(int disk_id, int head_id) {
     // }
 }
 
-std::string dp_plan(int disk_id, int tokens, int head_id) {
+std::string dp_plan(int disk_id, int head_id, int tokens) {
     for (int i = 0; i <= tokens; i++) { // 初始化，清空dp和dp_path
         for (int j = 0; j <= 9; j++) {
             dp[i][j] = 1e6;     // 代价设为无穷大
@@ -369,10 +372,8 @@ void judge_request_on_objects(const std::set<int> &set,
             int front = deque->front(); // 取出时间最早的请求
             if (request[front].time <= object[id].last_finish_time) {
                 flag = true;
-                request[front].is_done = true; //这里标记为true实际上是告诉clean可以删除这个请求了
-                // if (!request[front].is_timeout) {
-                    finished_request.push_back(front);
-                // }
+                request[front].is_done = true; //这里标记为true实际上是告诉clean可以从全局请求队列里删除这个请求了
+                finished_request.push_back(front);
                 deque->pop_front();
                 object[id].cnt_request--; // 修改对象的请求数量
                 for (int j = 1; j <= REP_NUM; j++) {
@@ -389,9 +390,7 @@ void judge_request_on_objects(const std::set<int> &set,
         //     if (request[front].time <= object[id].last_finish_time) {
         //         flag = true;
         //         request[front].is_done = true;
-        //         if (!request[front].is_timeout) {
-        //             finished_request.push_back(front);
-        //         }
+        //         finished_request.push_back(front);
         //         queue->pop();
         //     } else {
         //         break;
@@ -403,8 +402,8 @@ void judge_request_on_objects(const std::set<int> &set,
     }
 }
 
-std::set<int> solve_disk(int disk_id, std::string &actions,
-                         std::vector<int> &finished_request, int head_id) {
+std::set<int> solve_disk(int disk_id, int head_id, std::string &actions,
+                         std::vector<int> &finished_request) {
     auto p = jump_decision(disk_id, head_id); // 决策初始位置，以及是否不得不使用jump
     // if(p.first == 1) {
     //     auto max_cnt_request_object = find_max_cnt_request_object(disk_id);
@@ -433,7 +432,7 @@ std::set<int> solve_disk(int disk_id, std::string &actions,
 //        disk_head[disk_id].last_action = 1; // 使用pass
 //        disk_head[disk_id].last_token = 0;
 
-        auto s = dp_plan(disk_id, G, head_id); // 使用dp计算最优操作序列，最优化目标位尽可能走得远
+        auto s = dp_plan(disk_id, head_id,G); // 使用dp计算最优操作序列，最优化目标位尽可能走得远
 
         actions += s;
         actions += "#\n";
@@ -478,7 +477,7 @@ std::set<int> solve_disk(int disk_id, std::string &actions,
         disk_head[disk_id][head_id].pos = i;
 
 //        std::cerr << "[debug] start judge_request_on_objects" << std::endl;
-        judge_request_on_objects(obj_indices, finished_request, changed_objects); // 处理被修改过的对象上潜在的请求
+        judge_request_on_objects(obj_indices, finished_request,changed_objects); // 处理被修改过的对象上潜在的请求
 //        std::cerr << "[DEBUG] finish judge_request_on_objects" << std::endl;
 
 //        reset_disk_cnt(changed_objects);
@@ -494,7 +493,6 @@ void set_request_info(int request_id, int object_id) {
     request[request_id].prev_id = object[object_id].last_request_point;
     request[request_id].is_done = false;
     request[request_id].time = timestamp;
-    request[request_id].is_timeout = false;
 
     object[object_id].last_request_point = request[request_id].time;
     object[object_id].active_phases.push_back(request_id);
@@ -507,7 +505,7 @@ void set_request_info(int request_id, int object_id) {
     }
 }
 
-void clean_timeout_request() {
+void clean_timeout_request(std::vector<int> &busy_requests) {
     //TODO:这个优化不一定和磁盘按照“有效块数量排序”兼容，没想清楚
     static const int time_limit = 95; //超参数，时间片数
     while (!global_requestions.empty()) {
@@ -517,18 +515,26 @@ void clean_timeout_request() {
             continue;
         }
 //        std::cerr<< "[DEBUG] front request id = " << request_id << " time = " << request[request_id].time << std::endl;
-        if (timestamp - request[request_id].time >= time_limit) {
+        if (timestamp - request[request_id].time > time_limit) {
             global_requestions.pop();
             int obj_id = request[request_id].object_id;
 
-            object[obj_id].active_phases.pop_front();
-            object[obj_id].cnt_request--;
-            for (int j = 1; j <= REP_NUM; j++) {
-                di[object[obj_id].replica[j]].cnt_request--;
+
+            int r_id = object[obj_id].active_phases.front();
+
+            if (r_id != request_id) {
+                std::cerr << "[DEBUG]" << "there is a bug in clean_timeout_request" << std::endl;
+            }
+
+            if (timestamp - request[r_id].time > time_limit) {
+                object[obj_id].active_phases.pop_front();
+                object[obj_id].cnt_request--;
+                for (int j = 1; j <= REP_NUM; j++) {
+                    di[object[obj_id].replica[j]].cnt_request--;
+                }
+                busy_requests.push_back(r_id);
             }
             // object[obj_id].deleted_phases.push(request_id);
-            timeout_request.push(request_id);
-            request[request_id].is_timeout = true;
         } else {
             break;
         }
@@ -612,18 +618,18 @@ void read_action() {
 
     std::set<int> changed_objects;
     for (int i = 1; i <= N; i++) {
-        for (int j = 1; j <= MAX_DISK_HEAD_NUM; j++) {
-            std::set<int> t = solve_disk(disk_id[i - 1], head_movement[disk_id[i - 1]][j], finished_request, j);
+        for (int j = 1; j <= 2; j++) {
+            std::set<int> t = solve_disk(disk_id[i - 1], j, head_movement[disk_id[i - 1]][j], finished_request);
             changed_objects.insert(t.begin(), t.end());
         }
+
 //        std::cerr << "[DEBUG] finish disk solve for i = : " << i << std::endl;
     }
 //    update_disk_cnt(changed_objects);
 
     for (int i = 1; i <= N; i++) {
-        for (int j = 1; j <= MAX_DISK_HEAD_NUM; j++) {
+        for (int j = 1; j <= 2; j++)
             printf("%s", head_movement[i][j].c_str());
-        }
         // std::cerr << "[DEBUG] head_movement[" << i << "] = " << head_movement[i] << std::endl;
     }
 
@@ -635,14 +641,16 @@ void read_action() {
         printf("%d\n", finished_request[i]);
     }
 
-    clean_timeout_request();
+    std::vector<int> busy_requests;
+
+    clean_timeout_request(busy_requests);
     // update_valuable_block_num();//28412380.1172
 
-    int timeout_request_num = (int)timeout_request.size();
-    printf("%d\n", timeout_request_num);
-    while (!timeout_request.empty()) {
-        printf("%d\n", timeout_request.front());
-        timeout_request.pop();
+    int n_busy = (int)busy_requests.size();
+    printf("%d\n", n_busy);
+
+    for (int i = 1; i <= n_busy; i++) {
+        printf("%d\n", busy_requests[i - 1]);
     }
 
     fflush(stdout);

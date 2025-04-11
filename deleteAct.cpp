@@ -10,7 +10,8 @@ void do_object_delete(const int *object_unit, const int disk_id, int size) {
     for (int i = 1; i <= size; i++) {
         disk_obj_id[disk_id][object_unit[i]] = 0;   // 清空磁盘obj_id
         disk_block_id[disk_id][object_unit[i]] = 0; // 清空磁盘 block_id
-        
+        di[disk_id]
+                .distribute_length[di[disk_id].disk_belong_tag[object_unit[i]]]--;
     }
 }
 
@@ -41,7 +42,6 @@ void delete_action() {
     for (int i = 1; i <= n_delete; i++) {
         int id = _id[i];
         abort_num += object[id].cnt_request;
-        // abort_num += object[id].deleted_phases.size();
     }
 
 //    std::set<int> object_id_set;
@@ -57,10 +57,10 @@ void delete_action() {
         while (!object[id].active_phases.empty()) {
             int current_id = object[id].active_phases.front();
             object[id].active_phases.pop_front();
-            // if (!request[current_id].is_done) { // 这里应该总是可以删除的
+            if (!request[current_id].is_done) { // 这里应该总是可以删除的
                 printf("%d\n", current_id);     // 打印未完成请求的 ID
                 request[current_id].is_done = true; // 标记请求为已完成，方便从global_requests里删除
-            // }
+            }
             for (int j = 1; j <= REP_NUM; j++) {
                 di[object[id].replica[j]].cnt_request --;
             }
@@ -70,7 +70,7 @@ void delete_action() {
         //     int current_id = object[id].deleted_phases.front();
         //     object[id].deleted_phases.pop();
         //     request[current_id].is_done = true; //出于一致性考虑，这里也标记为已完成
-        //     // printf("%d\n", current_id);     // 打印未完成请求的 ID
+        //     printf("%d\n", current_id);     // 打印未完成请求的 ID
         // }
 
         // 删除对象的副本
@@ -86,6 +86,6 @@ void delete_action() {
         object[id].is_delete = true; // 标记对象为已删除
     }
 
+//    update_disk_cnt(object_id_set); // 增加请求数量后需要更新磁盘上的set
     fflush(stdout);                 // 刷新输出缓冲区
 }
-

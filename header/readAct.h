@@ -61,8 +61,9 @@ void set_request_info(int request_id, int object_id);
 
 /**
  * 清理超时请求
+ * @param busy_requests 记录超时请求的编号
  */
-void clean_timeout_request();
+void clean_timeout_request(std::vector<int> &busy_requests);
 
 /**
  * 更新有价值的块数
