@@ -6,10 +6,6 @@
 
 Request request[MAX_REQUEST_NUM]; // 请求数组
 Object object[MAX_OBJECT_NUM];    // 对象数组
-DiskInfo di[MAX_DISK_NUM];
-HotTagAlloc hot_tag_alloc[MAX_TAG_NUM];
-DiskHead disk_head[MAX_DISK_NUM][MAX_DISK_HEAD_NUM + 1];
-
 
 int T, M, N, V, G, K; // 时间片、对象标签、硬盘数量、存储单元、令牌数量、gc次数
 int total_object_num;                           // 当前对象数量
@@ -49,11 +45,8 @@ int main() {
     freopen("log.txt", "w", stderr); // 将调试输出重定向到 log.txt
 
     scanf("%d%d%d%d%d%d", &T, &M, &N, &V, &G, &K); // 读取参数
-    for (int i = 1; i <= N; i++) {           // 初始化磁头位置和当前阶段
-        for (int j = 1; j <= MAX_DISK_HEAD_NUM; j++) {
-            disk_head[i][j].pos = 1;
-        }
-    }
+
+    init_disk_head();
 
     preprocess_tag();
 

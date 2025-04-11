@@ -7,6 +7,9 @@ int fre_read[MAX_TAG_NUM][TAG_PHASE];  // 每个标签的每个阶段读取的�
 
 int tag_alloc_length[MAX_TAG_NUM]; // 每个标签的分配长度
 
+HotTagAlloc hot_tag_alloc[MAX_TAG_NUM];
+DiskInfo di[MAX_DISK_NUM];
+
 /**
  * 计算磁盘disk_id的最大连续空闲块长度
  * @param disk_id 磁盘编号

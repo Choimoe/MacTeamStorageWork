@@ -9,22 +9,18 @@ int dp[MAX_TOKEN_NUM][10];
 int dp_path[MAX_TOKEN_NUM][10];
 int time_vis[MAX_OBJECT_NUM][MAX_OBJECT_SIZE]; // 表示每个对象块最后一次被read的时间
 
-std::queue<int> global_requestions; // 全局的请求队列，按照时间戳天然不降序
+DiskHead disk_head[MAX_DISK_NUM][MAX_DISK_HEAD_NUM + 1];
 
+std::queue<int> global_requestions; // 全局的请求队列，按照时间戳天然不降序
 std::queue<int> timeout_request;
 
-/**
- * 更新object_id_set中所有对象的磁盘set，需要支持cnt_request增加、减小。
- * @param object_id_set 记录需要修改的object的id的集合（使用set自动去重）
- */
 void reset_disk_cnt(const std::set<int> &object_id_set) {
     for (int object_id : object_id_set) {
         for (int rep = 1; rep <= REP_NUM; rep++) {
             int disk_id = object[object_id].replica[rep];
             for (int i = 1; i <= object[object_id].size; i++) {
                 int index = object[object_id].unit[rep][i];
-                auto p =
-                        di[disk_id].required.lower_bound(std::make_pair(index, 0));
+                auto p = di[disk_id].required.lower_bound(std::make_pair(index, 0));
 
                 if (p != di[disk_id].required.end() &&
                     p->first == index) { // 删除原来的
@@ -39,18 +35,13 @@ void reset_disk_cnt(const std::set<int> &object_id_set) {
     }
 }
 
-/**
- * 更新object_id_set中所有对象的磁盘set，需要支持cnt_request增加、减小。
- * @param object_id_set 记录需要修改的object的id的集合（使用set自动去重）
- */
 void update_disk_cnt(const std::set<int> &object_id_set) {
     for (int object_id : object_id_set) {
         for (int rep = 1; rep <= REP_NUM; rep++) {
             int disk_id = object[object_id].replica[rep];
             for (int i = 1; i <= object[object_id].size; i++) {
                 int index = object[object_id].unit[rep][i];
-                auto p =
-                        di[disk_id].required.lower_bound(std::make_pair(index, 0));
+                auto p = di[disk_id].required.lower_bound(std::make_pair(index, 0));
 
                 if (p != di[disk_id].required.end() &&
                     p->first == index) { // 删除原来的
@@ -65,10 +56,7 @@ void update_disk_cnt(const std::set<int> &object_id_set) {
     }
 }
 
-
-
 std::pair<int, int> find_max_cnt_request_object(int disk_id) {
-    //遍历所有object, 找出当前磁盘上，cnt_request最大的object
     int max_cnt_request = 0;
     int max_cnt_request_object = 0;
     int max_cnt_request_rep = 0;
@@ -125,12 +113,6 @@ std::pair<int, int> get_nearest_valuable_object(int disk_id, int head) {
     return std::make_pair(-1, 0);
 }
 
-/**
- *  决策disk_id这块硬盘是否需要进行jump，以及决策首地址。
- * @param disk_id 磁盘编号
- * @return first:表示是否jump;
- * second表示要移动到的位置。特别的，-1表示该磁头无任何操作。
- */
 std::pair<int, int> jump_decision(int disk_id, int head_id) {
     // TODO:如果没有有效的对象块该如何决策？
     // TODO:超前搜索一个时间片
@@ -238,12 +220,6 @@ std::pair<int, int> jump_decision(int disk_id, int head_id) {
     // }
 }
 
-/**
- * 使用动态规划求磁盘disk_id在tokens个令牌内的最优行动序列，优化目标是尽可能走得远
- * @param disk_id 磁盘编号
- * @param tokens 剩余的tokens数量
- * @return 最优的行动序列
- */
 std::string dp_plan(int disk_id, int tokens, int head_id) {
     for (int i = 0; i <= tokens; i++) { // 初始化，清空dp和dp_path
         for (int j = 0; j <= 9; j++) {
@@ -383,12 +359,6 @@ std::string dp_plan(int disk_id, int tokens, int head_id) {
     return result;
 }
 
-/**
- * 判断可能完成的对象上的请求是否完成
- * @param set 可能完成读入的对象编号
- * @param finished_request 完成的对象请求，引用
- * @param changed_objects 存在被完成请求的对象集合
- */
 void judge_request_on_objects(const std::set<int> &set,
                               std::vector<int> &finished_request,
                               std::set<int> &changed_objects) {
@@ -433,12 +403,6 @@ void judge_request_on_objects(const std::set<int> &set,
     }
 }
 
-/**
- * 对于给定磁盘编号，处理当前时间片的操作
- * @param disk_id 磁盘编号
- * @param actions 记录磁头移动的字符串
- * @param finished_request 记录已经完成的请求
- */
 std::set<int> solve_disk(int disk_id, std::string &actions,
                          std::vector<int> &finished_request, int head_id) {
     auto p = jump_decision(disk_id, head_id); // 决策初始位置，以及是否不得不使用jump
@@ -524,11 +488,7 @@ std::set<int> solve_disk(int disk_id, std::string &actions,
     return changed_objects;
 }
 
-/**
- * 设置请求信息
- * @param request_id 请求编号
- * @param object_id 对象编号
- */
+
 void set_request_info(int request_id, int object_id) {
     request[request_id].object_id = object_id;
     request[request_id].prev_id = object[object_id].last_request_point;
@@ -587,9 +547,6 @@ void update_valuable_block_num() {
     }
 }
 
-/**
- * 处理读入操作
- */
 void read_action() {
     int n_read;                     // 读取请求数量
     int request_id = -1, object_id; // 请求 ID 和对象 ID
@@ -691,3 +648,10 @@ void read_action() {
     fflush(stdout);
 }
 
+void init_disk_head() {
+    for (int i = 1; i <= N; i++) {           // 初始化磁头位置和当前阶段
+        for (int j = 1; j <= MAX_DISK_HEAD_NUM; j++) {
+            disk_head[i][j].pos = 1;
+        }
+    }
+}
