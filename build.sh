@@ -1,17 +1,23 @@
 #!/bin/bash
 
+RUN_PARAMS="-r 10000 20000 50000"
+
 LOG_FILE="./run_output.log"
+ROOT_DIR="../../"
+EXEC_FILE="$ROOT_DIR/main.exe"
+NAME="choimoe"
+SUBMIT_DIR="submit"
 
 # 编译C++程序
-clang++ main.cpp -o ../../main.exe -std=c++17 -O2
-# clang++ -fsanitize=address -g main.cpp -o ../../main.exe -std=c++17
+clang++ *.cpp -o $EXEC_FILE -std=c++17 -O2
+# clang++ -fsanitize=address -g main.cpp -o $EXEC_FILE -std=c++17
 if [ $? -ne 0 ]; then
     echo "build.sh: 编译失败，退出打包流程"
     exit 1
 fi
 
 # 运行测试并捕获输出
-python ../../run.py ../../interactor/macos/interactor ../../data/sample_practice.in ../../main.exe -r 10000 20000 50000 2>&1 | tee "$LOG_FILE"
+python $ROOT_DIR/run.py $ROOT_DIR/interactor/macos/interactor $ROOT_DIR/data/sample_practice.in $EXEC_FILE $RUN_PARAMS 2>&1 | tee "$LOG_FILE"
 
 # 解析输出结果
 if grep -q '"error_code":"interaction_successful"' "$LOG_FILE"; then
@@ -23,10 +29,11 @@ if grep -q '"error_code":"interaction_successful"' "$LOG_FILE"; then
         timestamp=$(date "+(%Y.%-m.%-d_%-H.%-M)" | sed 's/^-//g; s/ \?-\?/0/g')
         
         # 构建zip文件名
-        zip_name="score-${score}-${timestamp}.zip"
+        zip_name="$NAME-${score}-${timestamp}.zip"
         
-        # 打包文件（假设源文件在demos/cpp目录下）
-        zip -r "$zip_name" ./*.h ./*.cpp ./CMakeLists.txt
+        mkdir -p $SUBMIT_DIR
+        find . -type f \( -name "*.h" -o -name "*.cpp" -o -name "CMakeLists.txt" \) -print0 | \
+            xargs -0 zip -r "$SUBMIT_DIR/$zip_name"
         
         echo "build.sh: 成功打包：$zip_name"
     else
