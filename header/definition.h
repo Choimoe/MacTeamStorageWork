@@ -29,8 +29,7 @@
 #define MAX_TAG_NUM (16 + 1)
 #define MAX_OBJECT_SIZE (5 + 1)  // 最大对象大小
 #define MAX_TOKEN_NUM (1000 + 1) // 最大令牌数量
-#define OUT_DATE_TIME (105)
-#define MAX_DISK_HEAD_NUM (2)
+#define HEAD_NUM (2 + 1)         //磁头数量
 
 /**
  * @brief 请求结构体
@@ -127,9 +126,11 @@ extern int disk_obj_id[MAX_DISK_NUM][MAX_DISK_SIZE];   // 磁盘上存储的obj�
 extern int disk_block_id[MAX_DISK_NUM][MAX_DISK_SIZE]; // 磁盘上存储的obj的block的编号
 extern int timestamp;                                  // 当前时间戳
 
-extern DiskHead disk_head[MAX_DISK_NUM][MAX_DISK_HEAD_NUM + 1]; // 磁头状态数组
+extern DiskHead disk_head[MAX_DISK_NUM][HEAD_NUM]; // 磁头状态数组
 extern DiskInfo di[MAX_DISK_NUM];
 extern HotTagAlloc hot_tag_alloc[MAX_TAG_NUM];
+
+extern int phase_G[TAG_PHASE];
 
 #endif
 

@@ -45,8 +45,10 @@ int main() {
     freopen("log.txt", "w", stderr); // 将调试输出重定向到 log.txt
 
     scanf("%d%d%d%d%d%d", &T, &M, &N, &V, &G, &K); // 读取参数
-
-    init_disk_head();
+    for (int i = 1; i <= N; i++) {           // 初始化磁头位置和当前阶段
+        disk_head[i][1].pos = 1;
+        disk_head[i][2].pos = 1;
+    }
 
     preprocess_tag();
 
@@ -55,13 +57,18 @@ int main() {
 
     // 主循环，处理时间片
     for (int t = 1; t <= T + EXTRA_TIME; t++) {
+//         std::cerr << "[DEBUG] " << "------- t: " << t <<"-------"<< std::endl;
+        //        std::endl;
         timestamp_action(); // 处理时间戳
+//         std::cerr << "[DEBUG] " << "timestamp_action" << std::endl;
         delete_action();    // 处理删除请求
+//         std::cerr << "[DEBUG] " << "delete_action" << std::endl;
         write_action();     // 处理写请求
+//         std::cerr << "[DEBUG] " << "write_action" << std::endl;
         read_action();      // 处理读请求
-        if (t % 1800 == 0) {
+//         std::cerr << "[DEBUG] " << "read_action" << std::endl;
+        if (t % 1800 == 0)
             garbage_collection_action();
-        }
     }
     clean(); // 清理资源
 

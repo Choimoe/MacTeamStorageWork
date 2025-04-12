@@ -2,9 +2,6 @@
 
 std::vector<std::pair<int, int> > find_swap(int disk_id, int&remain_swap_num) {
     std::vector<std::pair<int, int> > swap_list;
-    std::vector<int> visited(V + 1, 0);
-    for (int i = 1; i <= V; i++) {
-    }
     return swap_list;
 }
 

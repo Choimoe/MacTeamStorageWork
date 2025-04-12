@@ -9,7 +9,7 @@ int dp[MAX_TOKEN_NUM][10];
 int dp_path[MAX_TOKEN_NUM][10];
 int time_vis[MAX_OBJECT_NUM][MAX_OBJECT_SIZE]; // 表示每个对象块最后一次被read的时间
 
-DiskHead disk_head[MAX_DISK_NUM][MAX_DISK_HEAD_NUM + 1];
+DiskHead disk_head[MAX_DISK_NUM][HEAD_NUM];
 
 std::queue<int> global_requestions; // 全局的请求队列，按照时间戳天然不降序
 std::queue<int> timeout_request;
@@ -432,7 +432,7 @@ std::set<int> solve_disk(int disk_id, int head_id, std::string &actions,
 //        disk_head[disk_id].last_action = 1; // 使用pass
 //        disk_head[disk_id].last_token = 0;
 
-        auto s = dp_plan(disk_id, head_id,G); // 使用dp计算最优操作序列，最优化目标位尽可能走得远
+        auto s = dp_plan(disk_id, head_id,G + phase_G[((timestamp + 1799)/ 1800)]); // 使用dp计算最优操作序列，最优化目标位尽可能走得远
 
         actions += s;
         actions += "#\n";
@@ -569,7 +569,7 @@ void read_action() {
     // std::cerr << "[DEBUG] read_action"<<n_read << std::endl;
 //    update_disk_cnt(object_id_set); // 增加请求数量后需要更新磁盘上的set
 
-    std::string head_movement[N + 1][MAX_DISK_HEAD_NUM + 1]; // 存储磁头移动记录
+    std::string head_movement[N + 1][HEAD_NUM]; // 存储磁头移动记录
     std::vector<int> finished_request;
     std::vector<int> disk_id;
 
@@ -658,7 +658,7 @@ void read_action() {
 
 void init_disk_head() {
     for (int i = 1; i <= N; i++) {           // 初始化磁头位置和当前阶段
-        for (int j = 1; j <= MAX_DISK_HEAD_NUM; j++) {
+        for (int j = 1; j <= 2; j++) {
             disk_head[i][j].pos = 1;
         }
     }

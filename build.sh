@@ -17,7 +17,7 @@ if [ $? -ne 0 ]; then
 fi
 
 # 运行测试并捕获输出
-python $ROOT_DIR/run.py $ROOT_DIR/interactor/macos/interactor $ROOT_DIR/data/sample_practice.in $EXEC_FILE $RUN_PARAMS 2>&1 | tee "$LOG_FILE"
+python $ROOT_DIR/run.py $ROOT_DIR/interactor/macos/interactor-live $ROOT_DIR/data/sample_official.in $EXEC_FILE $RUN_PARAMS 2>&1 | tee "$LOG_FILE"
 
 # 解析输出结果
 if grep -q '"error_code":"interaction_successful"' "$LOG_FILE"; then
