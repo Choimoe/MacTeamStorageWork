@@ -1,6 +1,6 @@
 #!/bin/bash
 
-RUN_PARAMS="-r 10000 20000 50000"
+RUN_PARAMS="-r 10000 20000 50000 72000"
 
 LOG_FILE="./run_output.log"
 ROOT_DIR="../../"
@@ -10,7 +10,7 @@ SUBMIT_DIR="submit"
 
 # 编译C++程序
 clang++ *.cpp -o $EXEC_FILE -std=c++17 -O2
-# clang++ -fsanitize=address -g main.cpp -o $EXEC_FILE -std=c++17
+# clang++ -fsanitize=address -g *.cpp -o $EXEC_FILE -std=c++17
 if [ $? -ne 0 ]; then
     echo "build.sh: 编译失败，退出打包流程"
     exit 1

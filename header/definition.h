@@ -130,7 +130,7 @@ extern DiskHead disk_head[MAX_DISK_NUM][HEAD_NUM]; // 磁头状态数组
 extern DiskInfo di[MAX_DISK_NUM];
 extern HotTagAlloc hot_tag_alloc[MAX_TAG_NUM];
 
-extern int phase_G[TAG_PHASE];
+extern int phase_G[TAG_PHASE + 1];
 
 #endif
 

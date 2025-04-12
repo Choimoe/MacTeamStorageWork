@@ -553,6 +553,8 @@ void update_valuable_block_num() {
     }
 }
 
+int header_order = 1; // 1 - 正序，2 - 逆序
+
 void read_action() {
     int n_read;                     // 读取请求数量
     int request_id = -1, object_id; // 请求 ID 和对象 ID
@@ -616,10 +618,16 @@ void read_action() {
     //     }
     // });
 
+    header_order = 3 - header_order;
+
     std::set<int> changed_objects;
     for (int i = 1; i <= N; i++) {
         for (int j = 1; j <= 2; j++) {
-            std::set<int> t = solve_disk(disk_id[i - 1], j, head_movement[disk_id[i - 1]][j], finished_request);
+            int target_head = j;
+            if (header_order == 2) {
+                target_head = 3 - j;
+            }
+            std::set<int> t = solve_disk(disk_id[i - 1], target_head, head_movement[disk_id[i - 1]][target_head], finished_request);
             changed_objects.insert(t.begin(), t.end());
         }
 

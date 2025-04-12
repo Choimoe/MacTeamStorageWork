@@ -10,7 +10,7 @@ int tag_alloc_length[MAX_TAG_NUM]; // 每个标签的分配长度
 HotTagAlloc hot_tag_alloc[MAX_TAG_NUM];
 DiskInfo di[MAX_DISK_NUM];
 
-int phase_G[TAG_PHASE];
+int phase_G[TAG_PHASE + 1];
 
 /**
  * 计算磁盘disk_id的最大连续空闲块长度
@@ -137,8 +137,7 @@ std::vector<int> allocate_contiguous_blocks(int disk_id, int size,
             disk_obj_id[disk_id][block_pos] = object_id; // 填充对象编号
             disk_block_id[disk_id][block_pos] =
                     reverse_blocks ? size - j : j + 1; // 填充对象块编号
-            di[disk_id]
-                    .distribute_length[di[disk_id].disk_belong_tag[block_pos]]--;
+            di[disk_id].distribute_length[di[disk_id].disk_belong_tag[block_pos]]--;
         }
         if (reverse_blocks)
             std::reverse(blocks.begin(), blocks.end()); // 翻转块
@@ -333,7 +332,7 @@ void preprocess_tag() {
     }
 
     std::sort(tag_id.begin(), tag_id.end(), [](int a, int b) {
-        return fre_write[a][0] - fre_del[a][0] > fre_write[b][0] - fre_del[b][0];
+        return fre_read[a][0] > fre_read[b][0];
     });
 
     std::vector<int> start_point(N + 1), top(N + 1);
@@ -347,6 +346,9 @@ void preprocess_tag() {
     }
 
     auto update_disk = [&](int tag, int rep, int disk_id, int size) {
+        for (int i = 1; i <= size; i++) {
+            di[disk_id].disk_belong_tag[start_point[disk_id] + i - 1] = tag;
+        }
         hot_tag_alloc[tag].disk[rep] = disk_id;
         hot_tag_alloc[tag].start[rep] = start_point[disk_id];
         tag_alloc_length[tag] = size;
@@ -363,6 +365,9 @@ void preprocess_tag() {
     for (auto tag : hot_tag) {
         for (int i = 1; i <= region_first_order; i++) {
             int size = fre_write[tag][0] - fre_del[tag][0];
+            if (tag == 2 || tag == 8) {
+                size = size * 1.1;
+            }
             update_disk(tag, i, disk_id, size);
             disk_id = disk_id % N + 1;
         }

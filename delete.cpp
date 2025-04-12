@@ -10,8 +10,7 @@ void do_object_delete(const int *object_unit, const int disk_id, int size) {
     for (int i = 1; i <= size; i++) {
         disk_obj_id[disk_id][object_unit[i]] = 0;   // 清空磁盘obj_id
         disk_block_id[disk_id][object_unit[i]] = 0; // 清空磁盘 block_id
-        di[disk_id]
-                .distribute_length[di[disk_id].disk_belong_tag[object_unit[i]]]--;
+        di[disk_id].distribute_length[di[disk_id].disk_belong_tag[object_unit[i]]]--;
     }
 }
 
